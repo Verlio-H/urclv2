@@ -1,0 +1,1 @@
+gfortran main.f90 -o compiler -Ofast -std=f2018 -Wall
