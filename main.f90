@@ -892,8 +892,18 @@ module emit
                         end if
                         write (2,'(A)') 'HPSH R7'
                         write (2,'(A)') 'HPSH R8'
-                        write (2,'(A)') 'MOV R5 '//output2, 'MOV R6 '//output2u
-                        write (2,'(A)') 'MOV R7 '//output3, 'MOV R8 '//output3u
+                        write (2,'(A)') 'MOV R5 '//output2
+                        if (output2u=='') then
+                            write (2,'(A)') 'MOV R6 R0'
+                        else
+                            write (2,'(A)') 'MOV R6 '//output2u
+                        end if
+                        write (2,'(A)') 'MOV R7 '//output3
+                        if (output3u=='') then
+                            write (2,'(A)') 'MOV R8 R0'
+                        else
+                            write (2,'(A)') 'MOV R8 '//output3u
+                        end if
                         write (2,'(A)') 'HCAL .div32'
                         write (2,'(A)') 'HPOP R8'
                         write (2,'(A)') 'HPOP R7'
@@ -1112,19 +1122,19 @@ module emit
                     call parseBig(output2,output2u,result2,3,vars,type2)
                     select case (inst)
                     case ('MOV')
-                        write (2,'(A)') 'MOV '//output1//' '//output2
-                        write (2,'(A)') 'MOV '//output1u//' '//output2u
+                        call vars(getvar_index(vars, result1))%set(' '//output2)
+                        call vars(getvar_index(vars, result1))%set(' '//output2u,.true.)
                     case ('INC')
                         write (2,'(A)') 'BNC ~+2 '//output1//' 1'
                         if (output2u/='') then
-                            write (2,'(A)') 'INC '//output1u//' '//output2u
+                            call vars(getvar_index(vars, result1))%set('INC '//output2u,.true.)
                         else
-                            write (2,'(A)') 'INC '//output1u//' R0'
+                            call vars(getvar_index(vars, result1))%set(' 1',.true.)
                         end if
-                        write (2,'(A)') 'INC '//output1//' '//output2
+                        call vars(getvar_index(vars, result1))%set('INC '//output2)
                     end select
                 end if
-            case ('BRP')
+            case ('BRP','BNZ')
                 call parseSmall(output1,result1,2,vars)
                 if (type2/=32) then
                     call parseSmall(output2,result2,3,vars)
@@ -1134,6 +1144,9 @@ module emit
                     select case (inst)
                     case ('BRP')
                         write (2,'(A)') 'BRP '//output1//' '//output2u
+                    case ('BNZ')
+                        write (2,'(A)') 'BNZ '//output1//' '//output2
+                        write (2,'(A)') 'BNZ '//output1//' '//output2u
                     end select
                 end if
             case default
@@ -1222,7 +1235,7 @@ module emit
     subroutine standard1Op(inst,arg1,vars)
         type(variable), allocatable :: vars(:)
         character(len=:), allocatable :: arg1, inst
-        character(len=:), allocatable :: result1
+        character(len=:), allocatable :: result1, output1
         integer type1
         integer tmp
         result1 = parseArg(arg1, type1, vars)
@@ -1232,43 +1245,56 @@ module emit
                 print'(I0,A)', lnum, ': arg1 of '//inst//' must be of type ADDR'
                 stop -1, quiet=.true.
             end if
+            if (.not.cstackdec) then
+                print'(I0,A)', lnum, ': size of call stack must be declared before use of CAL'
+                stop -1, quiet=.true.
+            end if
+        case ('PSH')
+            if (.not.stackdec) then
+                print'(I0,A)', lnum, ': size of stack must be declared before use of PSH'
+                stop -1, quiet=.true.
+            end if
         case ('POP')
             if (result1(:1)/='V') then
                 print'(I0,A)', lnum, ': arg1 of POP must be a variable'
                 stop -1, quiet=.true.
             end if
+            if (.not.stackdec) then
+                print'(I0,A)', lnum, ': size of stack must be declared before use of POP'
+                stop -1, quiet=.true.
+            end if
         end select
-        result1 = result1(2:)
         if (arch(:1)=='C') then
+            result1 = result1(2:)
             select case (inst)
             case ('JMP')
                 write (2,'(A)') 'goto *('//result1//');'
             case ('CAL')
-                if (.not.cstackdec) then
-                    print'(I0,A)', lnum, ': size of call stack must be declared before use of CAL'
-                    stop -1, quiet=.true.
-                end if
                 write (2,'(A,I0,A)') 'cstack[csp]=&&line',lnum2+1,';'
                 write (2,'(A)') 'csp++;'
                 write (2,'(A)') 'goto *('//result1//');'
             case ('PSH')
-                if (.not.stackdec) then
-                    print'(I0,A)', lnum, ': size of stack must be declared before use of PSH'
-                    stop -1, quiet=.true.
-                end if
                 tmp = memsze
                 if (typesize(type1)>typesize(tmp)) tmp = type1
                 write (2,'(A)') '*('//c_type(tmp)//'*)sp='//result1//';'
                 write (2,'(A)') 'sp+=1+(sizeof('//c_type(tmp)//')-1)/sizeof('//c_type(memsze)//');'
             case ('POP')
-                if (.not.stackdec) then
-                    print'(I0,A)', lnum, ': size of stack must be declared before use of POP'
-                    stop -1, quiet=.true.
-                end if
                 tmp = memsze
                 if (typesize(type1)>typesize(tmp)) tmp = type1
                 write (2,'(A)') 'sp-=1+(sizeof('//c_type(tmp)//')-1)/sizeof('//c_type(memsze)//');'
                 write (2,'(A)') result1//'=*('//c_type(tmp)//'*)sp;'
+            end select
+        else if (arch=='IRI') then
+            select case (inst)
+            case ('CAL')
+                call parseSmall(output1,result1,2,vars)
+                write (2,'(A)') 'HCAL '//output1
+            case ('JMP')
+                call parseSmall(output1,result1,2,vars)
+                write (2,'(A)') 'JMP '//output1
+            case default
+                print'(I0,A)', lnum, ': unknown instruction '//inst//' for arch IRIS'
+                stop -1, quiet=.true.
             end select
         end if
     end subroutine
@@ -1362,7 +1388,7 @@ module emit
     subroutine lod(arg1,arg2,vars)
         type(variable), allocatable :: vars(:)
         character(len=:), allocatable :: arg1, arg2
-        character(len=:), allocatable :: result1, result2
+        character(len=:), allocatable :: result1, result2, output2
         integer type1, type2
         if (.not.memdec) then
             print'(I0,A)', lnum, ': size of memory must be declared before use of LOD'
@@ -1374,10 +1400,15 @@ module emit
             print'(I0,A)', lnum, ': arg2 of LOD must be of size ADDR'
             stop -1, quiet=.true.
         end if
+
+        result1 = result1(2:)
         if (arch(:1)=='C') then
-            result1 = result1(2:)
             result2 = result2(2:)
             write (2,'(A)') result1//'=*('//c_type(type1)//'*)'//result2//';'
+        else if (arch=='IRI') then
+            call parseSmall(output2,result2,2,vars)
+            call vars(getvar_index(vars, result1))%set('LOD '//output2)
+            if (type1==32) call vars(getvar_index(vars, result1))%set('LLOD 1 '//output2,.true.)
         end if
     end subroutine
 
@@ -1389,6 +1420,8 @@ module emit
         if (arch(:1)=='C') then
             write (2,'(A)') 'csp--;'
             write (2,'(A)') 'goto *cstack[csp];'
+        else if (arch=='IRI') then
+            write (2,'(A)') 'HRET'
         end if
     end subroutine
 
@@ -1913,8 +1946,12 @@ program compile
             lnum2 = lnum2 + 1
             write (2, '(A, I0, A)') 'line',lnum2,': ;'
         else if (arch=='IRI'.and.(tmpstr/=''.and.tmpstr(:1)/='@')) then
-            lnum2 = lnum2 + 1
-            write (2, '(A, I0)') '.line',lnum2
+            select case (tmpstr)
+            case ('D8','D16','D32','DREAL','DLREAL','DADDR','DW')
+            case default
+                lnum2 = lnum2 + 1
+                write (2, '(A, I0)') '.line',lnum2
+            end select
         end if
         line = trim(adjustl(line))
         if (line(:4)=='OUT%') then
