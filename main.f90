@@ -1,3 +1,67 @@
+! TODO: Implement specified integer type for C
+! TODO: Optimize IRIS 32 bit SUB
+! TODO: Implement constant folding
+! TODO: IRIS Microoptimizations to:
+!  MLT by 1
+!  MLT by power of 2
+!  MLT by 0
+!  MLT by -1
+!  FMLT/LFMLT by 1
+!  FMLT/LFMLT by 0
+!  FMLT/LFMLT by -1
+!  DIV by 1
+!  DIV by power of 2
+!  DIV by 0
+!  FDIV/LFDIV by 1
+!  FDIV/LFDIV by -1
+!  ADD 1
+!  SUB 1
+!  ADD 0
+!  SUB 0
+!  BSR/BSL/BSS more than bitwidth
+!  MOV/SMOV a a
+!  MOD 1
+! TODO: Throw warnings on:
+!  DIV/MOD 0
+!  integers in float operations
+!  floats in integer operations
+
+
+! Consts:
+!  @SIZE8
+!  @SIZE16
+!  @SIZE32
+!  @SIZEADDR
+!  @SIZEREAL
+!  @SIZELREAL
+!  @FMAX
+!  @FMIN
+!  @LFMAX
+!  @LFMIN
+!  @MAX8
+!  @MAX16
+!  @MAX32
+!  @SMAX8
+!  @SMAX16
+!  @SMAX32
+!  @MSB8
+!  @MSB16
+!  @MSB32
+!  @SMSB8
+!  @SMSB16
+!  @SMSB32
+!  @BITSREAL
+!  @BITSLREAL
+!  @BITSADDR
+!  @MINMEM
+!  @MEMSZE
+!  @MEM
+!  @MEM8
+!  @MEM16
+!  @MEM32
+!  @MEMADDR
+!  @MEMREAL
+!  @MEMLREAL
 module compilervars
     ! C  , U16, U32, SLK, IRI
     type DW
@@ -14,6 +78,7 @@ module compilervars
     integer :: memsze
     integer :: lnum
     integer :: lnum2
+    integer :: unique = 0
     type(DW), allocatable :: dws(:)
     type(Defined), allocatable :: defines(:)
     logical :: memdec = .false.
@@ -22,6 +87,7 @@ module compilervars
     integer :: currentLoc = 1
     logical :: incprint32 = .false.
     logical :: incdiv32 = .false.
+    logical :: incopengl = .false.
 end
 
 module var
@@ -238,23 +304,35 @@ module var
             stop -1, quiet=.true.
         end if
         if (arch=='IRI') then
-            if (this%location<=19) then
+            if (this%location<18.or.this%location==18.and.this%type/=32) then
                 var_get = this%location
                 return
             else
                 select case (arg)
                 case (3)
-                    write(2,'(A,I0)') 'LOD R23 M',this%location-20
-                    if (this%type==32) write(2,'(A,I0)') 'LOD R24 M',this%location-20
+                    if (this%location==18) then
+                        write(2,'(A)') 'MOV R23 R18'
+                    else
+                        write(2,'(A,I0)') 'LOD R23 M',this%location-19
+                    end if
+                    if (this%type==32) write(2,'(A,I0)') 'LOD R24 M',this%location-18
                     var_get = 23
                 case (2)
-                    write(2,'(A,I0)') 'LOD R21 M',this%location-20
-                    if (this%type==32) write(2,'(A,I0)') 'LOD R22 M',this%location-20
+                    if (this%location==18) then
+                        write(2,'(A)') 'MOV R21 R18'
+                    else
+                        write(2,'(A,I0)') 'LOD R21 M',this%location-19
+                    end if
+                    if (this%type==32) write(2,'(A,I0)') 'LOD R22 M',this%location-18
                     var_get = 21
                 case (1)
-                    write(2,'(A,I0)') 'LOD R20 M',this%location-20
-                    if (this%type==32) write(2,'(A,I0)') 'LOD R21 M',this%location-20
-                    var_get = 20
+                    if (this%location==18) then
+                        write(2,'(A)') 'MOV R19 R18'
+                    else
+                        write(2,'(A,I0)') 'LOD R19 M',this%location-19
+                    end if
+                    if (this%type==32) write(2,'(A,I0)') 'LOD R20 M',this%location-18
+                    var_get = 19
                 case default
                     print '(A)', 'invalid arg'
                     stop -1, quiet=.true.
@@ -280,7 +358,7 @@ module var
         if (arch(:1) == 'C') then
             write(2, '(A)') this%name//'='//src//';'
         else if (arch=='IRI') then
-            if (this%location+upperActual<=19) then
+            if (this%location+upperActual<=18) then
                 write(strint,'(I0)') this%location+upperActual
                 if (index(src,' ')/=1) then
                     write(2,'(A)') src(:index(src,' '))//'R'//trim(strint)//src(index(src,' '):)
@@ -288,7 +366,7 @@ module var
                     write(2,'(A)') 'MOV R'//trim(strint)//src
                 end if
             else
-                write(strint,'(I0)') this%location+upperActual-20
+                write(strint,'(I0)') this%location+upperActual-19
                 if (index(src,' ')/=1) then
                     write(2,'(A)') src(:index(src,' '))//'R25'//src(index(src,' '):)
                     write(2,'(A)') 'STR M'//trim(strint)//' R25'
@@ -410,15 +488,22 @@ module emit
                     parse = 'I'//trim(adjustl(parse))
                 end if
             else
+                type = 0
+                if (index(arg,'I')/=0) then
+                    read(arg(index(arg,'I')+1:),*) type
+                    arg = arg(:index(arg,'I')-1)
+                end if
                 if (arg(:2)/='0X') then
                     read (arg, *) temp
                 else
                     read (arg(3:),'(Z8)') temp
                     arg(2:2) = 'x'
                 end if
-                type = 8
-                if (temp >= 256 .or. temp < -256) type = 16
-                if (temp >= 65536 .or. temp < -65536) type = 32
+                if (type==0) then
+                    type = 8
+                    if (temp >= 256 .or. temp < -256) type = 16
+                    if (temp >= 65536 .or. temp < -65536) type = 32
+                end if
                 parse = 'I'//arg
             end if
         else if (arg(:1)=='''') then !char
@@ -473,6 +558,7 @@ module emit
             write(2,'(A)') '#include <stdio.h>',&
             &'#include <stdlib.h>',&
             &'#include <math.h>',&
+            &'#include "include/c11threads.h" //if %PIXEL is not used, this can be removed',&
             &'#ifdef _WIN32',&
             &'#include <conio.h>',&
             &'#define HEADER " "',&
@@ -505,8 +591,12 @@ module emit
             &'void* vADDR;',&
             &'float vREAL;',&
             &'double vLREAL;',&
-            &'};'
-            write(2,'(A)') 'int main() {',&
+            &'};',&
+            &'unsigned char* data;',&
+            &'int width, height;',&
+            &'void* mtxptr;',&
+            &'void* windowptr;'
+            write(2,'(A)') 'int run() {',&
             &'union tmp tmp1, tmp2, tmp3;',&
             &'HEADER;'
         else if (arch=='IRI') then
@@ -520,6 +610,16 @@ module emit
         character(len=256) :: readline
         if (arch(:1)=='C') then
             write(2,'(A)') '}'
+            if (incopengl) then
+                open(3, file='opengl.c', action='read')
+                do
+                    read(3, '(A)', end=3) readline
+                    write(2, '(A)') trim(readline)
+                end do
+              3 close(3)
+            else
+                write(2,'(A)') 'int main() { run(); }'
+            end if
         else if (arch=='IRI') then
             write(2,'(A)') 'HLT'
             if (incprint32) then
@@ -528,16 +628,16 @@ module emit
                     read(3, '(A)', end=1) readline
                     write(2, '(A)') trim(readline)
                 end do
+              1 close(3)
             end if
-          1 close(3)
             if (incdiv32) then
                 open(3, file='div32.urcl', action='read')
                 do
                     read(3, '(A)', end=2) readline
                     write(2, '(A)') trim(readline)
                 end do
+              2 close(3)
             end if
-          2 close(3)
         else
             print '(A)', 'end not implemented for this architecture'
         end if
@@ -646,7 +746,7 @@ module emit
             if (type1==8.and.type2/=8) then
                 print'(I0,A)', lnum, ': warning: destination of imm is smaller than immediate size'
             end if
-            if (addr<=19) then
+            if (addr<=18) then
                 if (addr<0) addr=-addr
                 if (type1==8.and.type2/=8) then
                     write(2,'(A,I0,A)') 'IMM R',addr,' '//result2//' 0xFF'
@@ -656,23 +756,23 @@ module emit
             else
                 if (type1==8.and.type2/=8) then
                     write(2,'(A)') 'IMM R21 '//result2//' 0xFF'
-                    write(2,'(A,I0,A)') 'STR M',addr-20,' R21'
+                    write(2,'(A,I0,A)') 'STR M',addr-19,' R21'
                 else
-                    write(2,'(A,I0,A)') 'STR M',addr-20,' '//result2
+                    write(2,'(A,I0,A)') 'STR M',addr-19,' '//result2
                 end if
             end if
         else
             read(result2,*) int
             if (addr>0) then
-                if (addr<=20) then
+                if (addr<=19) then
                     write(2,'(A,I0,A,I0)') 'IMM R',addr,' ',iand(int,2**16-1)
                 else
-                    write(2,'(A,I0,A,I0)') 'STR M',addr-21,' ',iand(int,2**16-1)
+                    write(2,'(A,I0,A,I0)') 'STR M',addr-20,' ',iand(int,2**16-1)
                 end if
-                if (addr<=19) then
+                if (addr<=18) then
                     write(2,'(A,I0,A,I0)') 'IMM R',addr+1,' ',shiftr(int,16)
                 else
-                    write(2,'(A,I0,A,I0)') 'STR M',addr-20,' ',shiftr(int,16)
+                    write(2,'(A,I0,A,I0)') 'STR M',addr-19,' ',shiftr(int,16)
                 end if
             else
                 print*,int
@@ -771,8 +871,8 @@ module emit
         character(len=:), allocatable :: inst, arg1, arg2, arg3
         character(len=:), allocatable :: result1, result2, result3, stype2, stype3
         character(len=:), allocatable :: output1, output2, output3
-        character(len=:), allocatable :: output2u, output3u
-        integer type1, type2, type3, itemp
+        character(len=:), allocatable :: output1u, output2u, output3u
+        integer type1, type2, type3, itemp, itemp2, itemp3
         result1 = parseArg(arg1, type1, vars)
         result2 = parseArg(arg2, type2, vars)
         result3 = parseArg(arg3, type3, vars)
@@ -796,7 +896,7 @@ module emit
         end select
         if (arch=='IRI') then
             select case (inst)
-            case ('BGE','BRE','BRL')
+            case ('BGE','BLE','BRE','BRG','BRL','BRC','BNC','SBRG','SBRL')
                 if (type2/=32.and.type3/=32) then
                     call parseSmall(output1,result1,1,vars)
                     call parseSmall(output2,result2,2,vars)
@@ -817,6 +917,26 @@ module emit
                             write (2,'(A)') 'BNZ ~+2 '//output3u
                         end if
                         write (2,'(A)') 'BGE '//output1//' '//output2//' '//output3
+                    case ('BRG')
+                        if (output2u/=''.and.output3u/='') then
+                            write (2,'(A)') 'BRG '//output1//' '//output2u//' '//output3u
+                            write (2,'(A)') 'BNE ~+2 '//output2u//' '//output3u
+                        else if (output3u=='') then
+                            write (2,'(A)') 'BNZ '//output1//' '//output2u
+                        else if (output2u=='') then
+                            write (2,'(A)') 'BNZ ~+2 '//output3u
+                        end if
+                        write (2,'(A)') 'BRG '//output1//' '//output2//' '//output3
+                    case ('BLE')
+                        if (output2u/=''.and.output3u/='') then
+                            write (2,'(A)') 'BRL '//output1//' '//output2u//' '//output3u
+                            write (2,'(A)') 'BNE ~+2 '//output2u//' '//output3u
+                        else if (output3u=='') then
+                            write (2,'(A)') 'BNZ ~+2 '//output2u
+                        else if (output2u=='') then
+                            write (2,'(A)') 'BNZ '//output1//' '//output3u
+                        end if
+                        write (2,'(A)') 'BLE '//output1//' '//output2//' '//output3
                     case ('BRE')
                         if (output2u/=''.and.output3u/='') then
                             write (2,'(A)') 'BNE ~+2 '//output2u//' '//output3u
@@ -836,14 +956,73 @@ module emit
                             write (2,'(A)') 'BNZ '//output1//' '//output3u
                         end if
                         write (2,'(A)') 'BRL '//output1//' '//output2//' '//output3
+                    case ('BRC')
+                        if (output2u/=''.and.output3u/='') then
+                            write (2,'(A)') 'BRC '//output1//' '//output2u//' '//output3u
+                            write (2,'(A)') 'ADD R25 '//output2u//' '//output3u
+                            write (2,'(A)') 'BNE ~+2 R25 @MAX'
+                        else if (output3u=='') then
+                            write (2,'(A)') 'BNE ~+2 @MAX '//output3u
+                        else if (output2u=='') then
+                            write (2,'(A)') 'BNE ~+2 @MAX '//output2u
+                        end if
+                        write (2,'(A)') 'BRC '//output1//' '//output2//' '//output3
+                    case ('BNC')
+                        if (output2u/=''.and.output3u/='') then
+                            write (2,'(A)') 'BRC ~+4 '//output2u//' '//output3u
+                            write (2,'(A)') 'ADD R25 '//output2u//' '//output3u
+                            write (2,'(A)') 'BNE '//output1//' R25 @MAX'
+                        else if (output3u=='') then
+                            write (2,'(A)') 'BNE '//output1//' '//output3u//' @MAX'
+                        else if (output2u=='') then
+                            write (2,'(A)') 'BNE '//output1//' '//output2u//' @MAX'
+                        end if
+                        write (2,'(A)') 'BNC '//output1//' '//output2//' '//output3
+                    case ('SBRG')
+                        if (output2u/=''.and.output3u/='') then
+                            write (2,'(A)') 'SBRG '//output1//' '//output2u//' '//output3u
+                            write (2,'(A)') 'BNE ~+6 '//output2u//' '//output3u
+                        else if (output3u=='') then
+                            write (2,'(A)') 'SBRG '//output1//' '//output2u//' 0'
+                        else if (output2u=='') then
+                            write (2,'(A)') 'SBRL ~+6 '//output3u//' -1'
+                        end if
+                        write (2,'(A)') 'BRN ~+3 '//output2u
+                        write (2,'(A)') 'BRN '//output1//' '//output3u
+                        write (2,'(A)') 'JMP ~+2'
+                        write (2,'(A)') 'BRP ~+2 '//output3u
+                        write (2,'(A)') 'BRG '//output1//' '//output2//' '//output3
+                    case ('SBRL')
+                        if (output2u/=''.and.output3u/='') then
+                            write (2,'(A)') 'SBRL '//output1//' '//output2u//' '//output3u
+                            write (2,'(A)') 'BNE ~+6 '//output2u//' '//output3u
+                        else if (output3u=='') then
+                            write (2,'(A)') 'SBRG ~+6 '//output2u//' 0'
+                        else if (output2u=='') then
+                            write (2,'(A)') 'SBRL '//output1//' '//output3u//' -1'
+                        end if
+                        write (2,'(A)') 'BRN ~+3 '//output2u
+                        write (2,'(A)') 'BRN ~+4 '//output3u
+                        write (2,'(A)') 'JMP ~+2'
+                        write (2,'(A)') 'BRP '//output1//' '//output3u
+                        write (2,'(A)') 'BRG '//output1//' '//output2//' '//output3
                     end select
                 end if
-            case ('ADD','SUB','DIV','MOD','NOR','AND')
+            case ('ADD','SUB','MLT','DIV','MOD','BSL','BSR','SBSR','NOR','AND','XOR')
                 if (type1/=32) then
                     call parseSmall(output2,result2,2,vars)
                     call parseSmall(output3,result3,3,vars)
                     result1 = result1(2:)
-                    call vars(getvar_index(vars,result1))%set(inst//' '//output2//' '//output3)
+                    select case (inst)
+                    case ('SBSR')
+                        call vars(getvar_index(vars,result1))%set('BSS '//output2//' '//output3)
+                    case default
+                        call vars(getvar_index(vars,result1))%set(inst//' '//output2//' '//output3)
+                    end select
+                    if (type1==8) then
+                        call parseSmall(output1,result1,1,vars)
+                        call vars(getvar_index(vars,result1))%set('AND '//output1//' 0xFF')
+                    end if
                 else
                     call parseBig(output2,output2u,result2,2,vars,type2)
                     call parseBig(output3,output3u,result3,3,vars,type3)
@@ -875,6 +1054,56 @@ module emit
                         write (2,'(A)') 'INC R25 R25'
                         call vars(getvar_index(vars,result1))%set('ADD '//output2//' R23')
                         call vars(getvar_index(vars,result1))%set(' R25',.true.)
+                    case ('MLT')
+                        itemp = vars(getvar_index(vars,result1))%location
+                        if (output2(:1)=='R') then
+                            read(output2(2:),*) itemp2
+                        else
+                            itemp2 = 0
+                        end if
+                        if (output3(:1)=='R') then
+                            read(output2(2:),*) itemp3
+                        else
+                            itemp3 = 0
+                        end if
+                        if (itemp==itemp2.or.itemp==itemp3.or.itemp>=18) then
+                            do itemp=1,24
+                                if (itemp/=itemp2.and.itemp/=itemp2+1.and.itemp+1/=itemp2) then
+                                    if (itemp/=itemp3.and.itemp/=itemp3+1.and.itemp+1/=itemp3) then
+                                        exit
+                                    end if
+                                end if
+                            end do
+                        end if
+                        if (itemp/=vars(getvar_index(vars,result1))%location) then
+                            write(2,'(A,I0)') 'HPSH R',itemp
+                            write(2,'(A,I0)') 'HPSH R',itemp+1
+                        end if
+                        write(2,'(A,I0,A)') 'UMLT R',itemp+1,' '//output2//' '//output3
+                        if (output3u/=''.or.output2u/='') then
+                            if (output3u/=''.and.output2u/='') then
+                                write(2,'(A,I0,A)') 'MLT R',itemp,' '//output2//' '//output3u
+                                write(2,'(A,I0,A,I0,A,I0)') 'ADD R',itemp+1,' R',itemp+1,' R',itemp
+                                write(2,'(A,I0,A)') 'MLT R',itemp,' '//output2u//' '//output3
+                                write(2,'(A,I0,A,I0,A,I0)') 'ADD R',itemp+1,' R',itemp+1,' R',itemp
+                            else if (output3u=='') then
+                                write(2,'(A,I0,A)') 'MLT R',itemp,' '//output2u//' '//output3
+                                write(2,'(A,I0,A,I0,A,I0)') 'ADD R',itemp+1,' R',itemp+1,' R',itemp
+                            else if (output2u=='') then
+                                write(2,'(A,I0,A)') 'MLT R',itemp,' '//output2//' '//output3u
+                                write(2,'(A,I0,A,I0,A,I0)') 'ADD R',itemp+1,' R',itemp+1,' R',itemp
+                            end if
+                        end if
+                        write(2,'(A,I0,A)') 'MLT R',itemp,' '//output2//' '//output3
+                        if (itemp/=vars(getvar_index(vars,result1))%location) then
+                            output2 = 'R'//repeat(' ',11)
+                            write(output2(2:),'(I0)') itemp
+                            call vars(getvar_index(vars,result1))%set(' '//trim(output2))
+                            write(output2(2:),'(I0)') itemp+1
+                            call vars(getvar_index(vars,result1))%set(' '//trim(output2),.true.)
+                            write(2,'(A,I0)') 'HPOP R',itemp+1
+                            write(2,'(A,I0)') 'HPOP R',itemp
+                        end if
                     case ('DIV','MOD')
                         incdiv32 = .true.
                         itemp = vars(getvar_index(vars,result1))%location
@@ -907,10 +1136,10 @@ module emit
                         write (2,'(A)') 'HCAL .div32'
                         write (2,'(A)') 'HPOP R8'
                         write (2,'(A)') 'HPOP R7'
-                        if (inst=='DIV') then
+                        if (inst=='DIV'.and.itemp/=3) then
                             call vars(getvar_index(vars,result1))%set(' R3')
                             call vars(getvar_index(vars,result1))%set(' R4',.true.)
-                        else
+                        else if (itemp/=5) then
                             call vars(getvar_index(vars,result1))%set(' R5')
                             call vars(getvar_index(vars,result1))%set(' R6',.true.)
                         end if
@@ -925,6 +1154,74 @@ module emit
                         end if
                         if (itemp/=2.and.itemp/=3) then
                             write (2,'(A)') 'HPOP R3'
+                        end if
+                    case ('BSL')
+                        if (output3(:1)/='R') then
+                            read(output3,*) itemp
+                            if (itemp<16) then
+                                write(2,'(A,Z0)') 'AND R25 '//output2//' 0x',2**16-2**(16-itemp)
+                                write(2,'(A,I0)') 'BSL R20 '//output2u//' '//output3
+                                write(2,'(A,I0)') 'BSR R25 R25 ',16-itemp
+                                call vars(getvar_index(vars,result1))%set('ADD R20 R25',.true.)
+                                call vars(getvar_index(vars,result1))%set('BSL '//output2//' '//output3)
+                            else if (itemp==16) then
+                                call vars(getvar_index(vars,result1))%set(' '//output2,.true.)
+                                call vars(getvar_index(vars,result1))%set(' R0')
+                            else
+                                write(output3,'(I0)') itemp-16
+                                call vars(getvar_index(vars,result1))%set('BSL '//output2//' '//trim(output3),.true.)
+                                call vars(getvar_index(vars,result1))%set(' R0')
+                            end if
+                        else
+                            write(2,'(A)') 'SUB R19 16 '//output3
+                            write(2,'(A,I0,A)') 'BRN .unique',unique,' R19'
+                            write(2,'(A)') 'BSS R25 @MSB '//output3
+                            write(2,'(A)') 'BSL R20 '//output2u//' '//output3
+                            write(2,'(A)') 'AND R25 R25 '//output2
+                            write(2,'(A)') 'BSR R25 R25 R19'
+                            call vars(getvar_index(vars,result1))%set('ADD R20 R25',.true.)
+                            call vars(getvar_index(vars,result1))%set('BSL '//output2//' '//output3)
+                            write(2,'(A,I0)') 'JMP .unique',unique+1
+                            write(2,'(A,I0)') '.unique',unique
+                            unique = unique+1
+                            call vars(getvar_index(vars,result1))%set('BSL '//output2//' R19',.true.)
+                            call vars(getvar_index(vars,result1))%set(' R0')
+                            write(2,'(A,I0)') '.unique',unique
+                            unique = unique+1
+                        end if
+                    case ('BSR','SBSR')
+                        if (output3(:1)/='R') then
+                            read(output3,*) itemp
+                            if (itemp<16) then
+                                write(2,'(A,Z0)') 'AND R25 '//output2u//' 0x',2**itemp-1
+                                write(2,'(A,I0)') 'BSR R20 '//output2//' '//output3
+                                write(2,'(A,I0)') 'BSL R25 R25 ',16-itemp
+                                call vars(getvar_index(vars,result1))%set('ADD R20 R25')
+                                if (inst=='BSR') then
+                                    call vars(getvar_index(vars,result1))%set('BSR '//output2u//' '//output3,.true.)
+                                else
+                                    call vars(getvar_index(vars,result1))%set('BSS '//output2u//' '//output3,.true.)
+                                end if
+                            else if (itemp==16) then
+                                call vars(getvar_index(vars,result1))%set(' '//output2u)
+                                if (inst=='BSR') then
+                                    call vars(getvar_index(vars,result1))%set(' R0',.true.)
+                                else
+                                    call parseBig(output1,output1u,result1,1,vars,type1)
+                                    call vars(getvar_index(vars,result1))%set('SSETL '//output1u//' R0',.true.)
+                                end if
+                            else
+                                write(output3,'(I0)') itemp-16
+                                if (inst=='BSR') then
+                                    call vars(getvar_index(vars,result1))%set('BSR '//output2u//' '//trim(output3))
+                                    call vars(getvar_index(vars,result1))%set(' R0',.true.)
+                                else
+                                    call parseBig(output1,output1u,result1,1,vars,type1)
+                                    call vars(getvar_index(vars,result1))%set('BSS '//output2u//' '//trim(output3))
+                                    call vars(getvar_index(vars,result1))%set('SSETL '//output1u//' R0',.true.)
+                                end if
+                            end if
+                        else
                         end if
                     case ('NOR')
                         call vars(getvar_index(vars,result1))%set('NOR '//output2//' '//output3)
@@ -941,6 +1238,15 @@ module emit
                             call vars(getvar_index(vars,result1))%set('NOR '//output2u//' '//output3u,.true.)
                         else
                             call vars(getvar_index(vars,result1))%set(' R0',.true.)
+                        end if
+                    case ('XOR')
+                        call vars(getvar_index(vars,result1))%set('XOR '//output2//' '//output3)
+                        if (output2u/=''.and.output3u/='') then
+                            call vars(getvar_index(vars,result1))%set('XOR '//output2u//' '//output3u,.true.)
+                        else if (output2u=='') then
+                            call vars(getvar_index(vars,result1))%set(' '//output3u,.true.)
+                        else
+                            call vars(getvar_index(vars,result1))%set(' '//output2u,.true.)
                         end if
                     end select
                 end if
@@ -1112,7 +1418,7 @@ module emit
         end select
         if (arch=='IRI') then
             select case (inst)
-            case ('MOV','INC')
+            case ('MOV','INC','LSH','NEG','NOT')
                 if (type1/=32) then
                     call parseSmall(output1,result1,2,vars)
                     call parseSmall(output2,result2,3,vars)
@@ -1125,13 +1431,39 @@ module emit
                         call vars(getvar_index(vars, result1))%set(' '//output2)
                         call vars(getvar_index(vars, result1))%set(' '//output2u,.true.)
                     case ('INC')
-                        write (2,'(A)') 'BNC ~+2 '//output1//' 1'
+                        write (2,'(A,I0,A)') 'BNC .unique',unique,' '//output1//' 1'
                         if (output2u/='') then
                             call vars(getvar_index(vars, result1))%set('INC '//output2u,.true.)
                         else
                             call vars(getvar_index(vars, result1))%set(' 1',.true.)
                         end if
+                        write (2,'(A,I0)') '.unique',unique
+                        unique = unique + 1
                         call vars(getvar_index(vars, result1))%set('INC '//output2)
+                    case ('LSH')
+                        if (output2u/='') then
+                            write (2,'(A)') 'LSH R25 '//output2u
+                        else
+                            write (2,'(A)') 'MOV R25 R0'
+                        end if
+                        write (2,'(A)') 'BRP ~+2 '//output2
+                        write (2,'(A)') 'INC R25 R25'
+                        call vars(getvar_index(vars, result1))%set('LSH '//output2)
+                        call vars(getvar_index(vars, result1))%set(' R25',.true.)
+                    case ('NEG')
+                        write (2,'(A)') 'NOT R23 '//output2
+                        if (output2u=='') then
+                            write (2,'(A)') 'NOT R24 R0'
+                        else
+                            write (2,'(A)') 'NOT R24 '//output2u
+                        end if
+                        write (2,'(A)') 'BNC ~+2 R23 1'
+                        write (2,'(A)') 'INC R24 R24'
+                        call vars(getvar_index(vars, result1))%set('INC R23')
+                        call vars(getvar_index(vars, result1))%set(' R24',.true.)
+                    case ('NOT')
+                        call vars(getvar_index(vars, result1))%set('NOT '//output2)
+                        call vars(getvar_index(vars, result1))%set('NOT '//output2u,.true.)
                     end select
                 end if
             case ('BRP','BNZ')
@@ -1172,6 +1504,8 @@ module emit
                 write (2,'(A)') 'tmp1.v32=abs(tmp2.v32);'
             case ('NEG')
                 write (2,'(A)') 'tmp1.v32=-tmp2.v32;'
+            case ('LSH')
+                write (2,'(A)') 'tmp1.v32=tmp2.v32<<1;'
             case ('RSH')
                 write (2,'(A)') 'tmp1.v32=tmp2.v32>>1;'
             case ('SRSH')
@@ -1240,13 +1574,18 @@ module emit
         integer tmp
         result1 = parseArg(arg1, type1, vars)
         select case (inst)
-        case ('JMP','CAL')
+        case ('CAL')
             if (type1/=1) then
                 print'(I0,A)', lnum, ': arg1 of '//inst//' must be of type ADDR'
                 stop -1, quiet=.true.
             end if
             if (.not.cstackdec) then
                 print'(I0,A)', lnum, ': size of call stack must be declared before use of CAL'
+                stop -1, quiet=.true.
+            end if
+        case ('JMP')
+            if (type1/=1) then
+                print'(I0,A)', lnum, ': arg1 of '//inst//' must be of type ADDR'
                 stop -1, quiet=.true.
             end if
         case ('PSH')
@@ -1425,10 +1764,11 @@ module emit
         end if
     end subroutine
 
-    subroutine out(arg1,arg2,vars)
+    subroutine out(arg1,arg2,arg3,arg4,vars)
         type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: arg1, arg2
+        character(len=:), allocatable :: arg1, arg2, arg3, arg4
         character(len=:), allocatable :: result1, result2, output2, output2u
+        character(len=:), allocatable :: result3, result4, output3, output4
         integer type1, type2
         result1 = parseArg(arg1, type1, vars)
         result2 = parseArg(arg2, type2, vars)
@@ -1443,6 +1783,17 @@ module emit
                 write(2,'(A)') 'printf("%c",'//result2//');'
             case ('%NUMB')
                 write(2,'(A)') 'printf("%d",'//result2//');'
+            case ('%PIXEL')
+                result3 = parseArg(arg3, type1, vars)
+                result4 = parseArg(arg4, type1, vars)
+                result3 = result3(2:)
+                result4 = result4(2:)
+                write(2,'(A)') 'mtx_lock(mtxptr);'
+                write(2,'(A)') 'data['//result3//'*width*4+'//result2//'*4] = '//result4//';'
+                write(2,'(A)') 'data['//result3//'*width*4+'//result2//'*4+1] = '//result4//';'
+                write(2,'(A)') 'data['//result3//'*width*4+'//result2//'*4+2] = '//result4//';'
+                write(2,'(A)') 'mtx_unlock(mtxptr);'
+                incopengl = .true.
             case default
                 print'(I0,A)', lnum, ': unknown port "'//result2//'" for target C'
             end select
@@ -1473,6 +1824,14 @@ module emit
                         write(2,'(A)') 'HCAL .print32','HPOP R1','HPOP R2'
                     end if
                 end if
+            case ('%PIXEL')
+                result3 = parseArg(arg3, type1, vars)
+                result4 = parseArg(arg4, type1, vars)
+                call parseSmall(output2,result2,1,vars)
+                call parseSmall(output3,result3,2,vars)
+                call parseSmall(output4,result4,3,vars)
+                write(2,'(A)') 'OUT %X '//output2, 'OUT %Y '//output3
+                write(2,'(A)') 'OUT %COLOR '//output4
             end select
         end if
 
@@ -1939,6 +2298,7 @@ program compile
     lnum = lnum + 1
     call fixstr(line, comment)
     tmpstr = getop(line,0,.false.)
+    write(2,'(A)') '//'//line
     if (len(tmpstr)>=1.and.tmpstr(:1)=='.') then
         call label(line)
     else 
@@ -1956,7 +2316,7 @@ program compile
         line = trim(adjustl(line))
         if (line(:4)=='OUT%') then
             tmpstr = line(4:index(line,' ')-1)
-            call out(tmpstr, getop(line,1), vars)
+            call out(tmpstr, getop(line,1), getop(line,2), getop(line,3), vars)
             goto 9
         else if (line(:3)=='IN%') then
             tmpstr = line(4:index(line,' ')-1)
@@ -2007,7 +2367,7 @@ program compile
              ! ABS, FABS, NEG, SRSH, MOV, INC, DEC, NOT, BRP, BRN, BRZ, BNZ, FBRZ, FBNZ, PSH, POP, CAL, RET, HLT
             call standard3Op(tmpstr, getop(line,1), getop(line,2), getop(line,3), vars)
         case ('MOV',& !general
-             &'ABS','NEG','RSH','SRSH','SMOV','INC','DEC','NOT','BRP','BRN','BRZ','BNZ',& !integer
+             &'ABS','NEG','LSH','RSH','SRSH','SMOV','INC','DEC','NOT','BRP','BRN','BRZ','BNZ',& !integer
              &'FABS','FNEG','FBRP','FBRN','FBRZ','FBNZ',& !real
              &'LFABS','LFNEG','LFBRP','LFBRN','LFBRZ','LFBNZ',& !long real
              &'ITOF','FTOI','ITOLF','LFTOI','FTOLF','LFTOF') !conversion
