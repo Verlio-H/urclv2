@@ -74,6 +74,9 @@
 module compilervars
     use includes, only: print32,div32,opengl
     ! C  , IRI
+    type string
+        character(len=:), allocatable :: value
+    end type
     type DW
         character(len=:), allocatable :: label
         integer address
@@ -83,15 +86,6 @@ module compilervars
         character(len=:), allocatable :: value
         logical :: int = .false.
         integer :: ivalue = 0
-    end type
-    type Trans
-        character(len=:), allocatable :: name
-        logical :: pure = .false.
-        logical :: included = .false.
-        logical :: c = .false.
-        character(len=3), allocatable :: types(:)
-
-        character(len=:), allocatable :: code
     end type
     character(len=3) :: arch
     integer :: memsze
@@ -108,31 +102,31 @@ module compilervars
     logical :: incdiv32 = .false.
     logical :: incopengl = .false.
     character(len=:), allocatable :: compiled
+    integer :: currframe = 1
+    integer :: id
+
+    type(string), allocatable :: args(:)
+    type(string), allocatable :: parsed(:)
+    integer, allocatable :: types(:)
+
+    
 end
 
-program compile
+program compiler
     use inst
     implicit none
-    type(variable), allocatable :: vars(:)
-    type(variable) temp
     ! general
-    integer i, dwcount
+    integer i
     ! argument parsing
-    character(len=64) :: args, ifile, ofile
+    character(len=64) :: arguments, ifile, ofile
     logical :: output = .false.
     logical :: archarg = .false.
-    ! program parsing
-    character(len=:), allocatable :: line, tmpstr, dwlist
-    logical, target :: comment
-    character(len=256) :: readline
-    ! init vars
-    allocate(vars(0))
     allocate(defines(6))
+
     lnum = 0
     lnum2 = 0
     arch = 'IRI'
     memsze = 8
-    comment = .false.
     ! get arguments
     ifile = 'input.urcl'
     if (arch(:1)=='C') then
@@ -141,24 +135,24 @@ program compile
         ofile = 'output.urcl'
     end if
     do i=1, command_argument_count()
-        call get_command_argument(i,args)
+        call get_command_argument(i,arguments)
         if (output) then
-            ofile = args
+            ofile = arguments
             output = .false.
         else if (archarg) then
-            if (args=='C') then
+            if (arguments=='C') then
                 arch = 'C'
                 if (ofile == 'output.urcl') then
                     ofile = 'output.c'
                 end if
             end if
             archarg = .false.
-        else if (args=='-o') then
+        else if (arguments=='-o') then
             output = .true.
-        else if (args=='-arch') then
+        else if (arguments=='-arch') then
             archarg = .true.
         else
-            ifile = args
+            ifile = arguments
         end if
     end do
 
@@ -216,131 +210,241 @@ program compile
 
     open(1, file=trim(ifile), action='read')
     open(2, file=trim(ofile), action='write')
-    if (arch(:1)=='C') then
-        call c_parseDws(dwcount, dwlist, 1)
-        rewind 1
-        call c_parseDws(dwcount, dwlist, 2)
-        rewind 1
-    end if
-    compiled = ''
-  1 line = ''
-  2 read (1, '(A)', advance='no', eor=3, end=9999) readline
-    line = line//readline
-    goto 2
-  3 line = line//readline
-    lnum = lnum + 1
-    call fixstr(line, comment)
-    tmpstr = getop(line,0,.false.)
-    call app('//'//line)
-    if (len(tmpstr)>=1.and.tmpstr(:1)=='.') then
-        call label(line)
-    else 
-        if (arch(:1)=='C'.and.(tmpstr/=''.and.tmpstr(:1)/='@')) then
-            lnum2 = lnum2 + 1
-            
-            call app('line'//itoa(lnum2)//': ;')
-        else if (arch=='IRI'.and.(tmpstr/=''.and.tmpstr(:1)/='@')) then
-            select case (tmpstr)
-            case ('D8','D16','D32','DREAL','DLREAL','DADDR','DW')
-            case default
-                lnum2 = lnum2 + 1
-                call app('.line'//itoa(lnum2))
-            end select
-        end if
-        line = trim(adjustl(line))
-        if (line(:4)=='OUT%') then
-            tmpstr = line(4:index(line,' ')-1)
-            call out(tmpstr, getop(line,1), getop(line,2,.false.), getop(line,3,.false.), vars)
-            goto 9
-        else if (line(:3)=='IN%') then
-            tmpstr = line(3:index(line,' ')-1)
-            call in(getop(line,1), tmpstr, vars)
-            goto 9
-        end if
-        select case (tmpstr)
-        case ('')
-            continue
-        case ('@VAR')
-            call temp%create(strtype(getop(line,2)), getop(line,1))
-            vars = [vars, temp]
-        case ('@MEMSZE')
-            memsze = strtype(getop(line,1))
-            if (arch(:1)=='C') then
-                call app('Dws=malloc('//itoa(dwcount)//'*sizeof('//c_type(memsze)//'));')
-                call app('#define const_SIZEMEM sizeof('//c_type(memsze)//')'//achar(10)//dwlist)
-            end if
-        case ('@MINMEM')
-            call minmem(getop(line,1))
-        case ('@DEFINE')
-            call define(getop(line,1),getop(line,2),vars)
-            tmpstr = getop(line,1)
-            if (tmpstr(:1)/='@') then
-                print'(I0,A)',lnum,': name of constant must start with @'
-                stop -1, quiet=.true.
-            end if
-            if (arch(:1)=='C') then
-                call app('#define const_'//tmpstr(2:)//' ')
-                tmpstr = parseArg(getop(line,2), i, vars)
-                compiled = compiled//tmpstr(2:)
-            end if
-
-        case ('@MINSTACK')
-            call minstack(getop(line,1))
-        case ('@MINCSTACK')
-            call mincstack(getop(line,1))
-        case ('LLOD',& !memory 
-             ! unsigned
-             &'ADD','SUB','MLT','DIV','MOD','BSL','BSR','BGE','BRG','BLE','BRL','BRE','BNE','BRC','BNC','AND','OR','XOR','NAND',&
-             &'NOR','XNOR','SETGE','SETG','SETLE','SETL','SETE','SETNE','SETC','SETNC',& !unsigned
-             &'SDIV','SBSR','SBGE','SBRG','SBLE','SBRL','SBRC','SBNC','SSETGE','SSETG','SSETLE','SSETL','SSETC','SSETNC',& !signed
-             &'FADD','FSUB','FMLT','FDIV','FMOD','FBGE','FBRG','FBLE','FBRL','FBRE','FBNE','FSETGE','FSETG','FSETLE','FSETL',& !real
-             &'FSETE','FSETNE',& !real
-             ! long real
-             &'LFADD','LFSUB','LFMLT','LFDIV','LFMOD','LFBGE','LFBRG','LFBLE','LFBRL','LFBRE','LFBNE','LFSETGE','LFSETG','LFSETLE',&
-             &'LFSETL','LFSETE','LFSETNE')
-             ! ABS, FABS, NEG, SRSH, MOV, INC, DEC, NOT, BRP, BRN, BRZ, BNZ, FBRZ, FBNZ, PSH, POP, CAL, RET, HLT
-            call standard3Op(tmpstr, getop(line,1), getop(line,2), getop(line,3), vars)
-        case ('MOV',& !general
-             &'ABS','NEG','LSH','RSH','SRSH','SMOV','INC','DEC','NOT','BRP','BRN','BRZ','BNZ',& !integer
-             &'FABS','FNEG','FBRP','FBRN','FBRZ','FBNZ',& !real
-             &'LFABS','LFNEG','LFBRP','LFBRN','LFBRZ','LFBNZ',& !long real
-             &'ITOF','FTOI','ITOLF','LFTOI','FTOLF','LFTOF') !conversion
-            call standard2Op(tmpstr, getop(line,1), getop(line,2), vars)
-        case ('JMP','CAL',& !control flow
-             &'PSH','POP') !memory
-            call standard1Op(tmpstr, getop(line,1), vars)
-        case ('RET')
-            call ret()
-        case ('HLT')
-            if (arch(:1)=='C') then
-                call app('return 0;')
-            else
-                call app('HLT')
-            end if
-        case ('LSTR')
-            call lstr(getop(line,1), getop(line,2), getop(line, 3), vars)
-        case ('CPY') !CPY now takes an amount to copy (memcpy basically)
-            call lstr(getop(line,1), getop(line,2), getop(line, 3), vars)
-        case ('STR')
-            call str(getop(line,1), getop(line,2), vars)
-        case ('LOD')
-            call lod(getop(line,1), getop(line,2), vars)
-        case ('IMM')
-            call imm(getop(line,1), getop(line,2), vars)
-        case ('DW','D8','D16','D32','DADDR','DREAL','DLREAL')
-            if (arch=='IRI') then
-                call data(tmpstr,line,vars)
-            else if (arch(:1)/='C') then
-                print'(I0,A)',lnum,': dw not implemented for this architecture'
-            end if
-        case default
-            print'(I0,A)',lnum,': unknown instruction'
-        end select
-    end if
-  9 call updatecom(line, comment)
-    goto 1
-    9999 continue
+    call instInit()
+    !call compile(readFile('insts.urcl'))
+    allocate(stack(1))
+    allocate(stack(1)%args(0))
+    allocate(stack(1)%parsed(0))
+    allocate(stack(1)%types(0))
+    args = stack(1)%args
+    parsed = stack(1)%parsed
+    types = stack(1)%types
+    stack(1)%id = unique
+    id = unique
+    unique = unique + 1
+    call compile()
     call init()
     write(2,'(A)') compiled
     call end()
+contains
+    recursive subroutine compile(input,initialvars)
+        logical :: fromstr
+        type(string), allocatable, optional :: input(:)
+        type(variable), allocatable, intent(in), optional :: initialvars(:)
+
+        character(len=:), allocatable :: line, tmpstr, dwlist
+        logical :: comment, done
+        integer :: dwcount
+        type(variable), allocatable :: vars(:)
+        type(variable) temp
+
+        if (present(initialvars)) then
+            vars = initialvars
+        else
+            allocate(vars(0))
+        end if
+        
+        comment = .false.
+        if (present(input)) then
+            fromstr = .true.
+        else
+            fromstr = .false.
+        end if
+
+        compiled = ''
+
+        if (.not.fromstr.and.arch(:1)=='C') then
+            call c_parseDws(dwcount, dwlist, 1)
+            rewind 1
+            call c_parseDws(dwcount, dwlist, 2)
+            rewind 1
+        end if
+
+        do
+        if (fromstr) then
+            if (.not.allocated(input)) return
+            line = input(1)%value
+            if (size(input)==1) then
+                deallocate(input)
+                done = .false.
+            else
+                done = .false.
+                input = input(2:)
+            end if
+        else
+            line = getline(done)
+            lnum = lnum + 1
+            if (mod(lnum,25000)==0) print*,lnum
+        end if
+        if (done) return
+        call fixstr(line, comment)
+        tmpstr = getop(line,0,.false.)
+        if (.not.fromstr) call app('//'//line)
+        if (len(tmpstr)>=1.and.tmpstr(:1)=='.') then
+            call label(line)
+        else 
+            if (arch(:1)=='C'.and.(tmpstr/=''.and.tmpstr(:1)/='@')) then
+                select case (tmpstr)
+                case ('D8','D16','D32','DREAL','DLREAL','DADDR','DW')
+                case default
+                    lnum2 = lnum2 + 1
+                    call app('line'//itoa(id)//'_'//itoa(lnum2)//': ;')
+                end select
+            else if (arch=='IRI'.and.(tmpstr/=''.and.tmpstr(:1)/='@')) then
+                select case (tmpstr)
+                case ('D8','D16','D32','DREAL','DLREAL','DADDR','DW')
+                case default
+                    lnum2 = lnum2 + 1
+                    call app('.line'//itoa(id)//'_'//itoa(lnum2))
+                end select
+            end if
+            line = trim(adjustl(line))
+            if (line(:4)=='OUT%') then
+                tmpstr = line(4:index(line,' ')-1)
+                call out(tmpstr, getop(line,1), getop(line,2,.false.), getop(line,3,.false.), vars)
+                goto 9
+            else if (line(:3)=='IN%') then
+                tmpstr = line(3:index(line,' ')-1)
+                call in(getop(line,1), tmpstr, getop(line,2,.false.), getop(line,3,.false.), vars)
+                goto 9
+            end if
+            if (transExists(tmpstr)) then
+                call insertTrans(line,tmpstr,vars)
+                cycle
+            end if
+            select case (tmpstr)
+            case ('')
+                continue
+            case ('@INST')
+                call inststart(getop(line,1))
+            case ('@VAR')
+                call temp%create(strtype(getop(line,2)), getop(line,1))
+                vars = [vars, temp]
+            case ('@MEMSZE')
+                memsze = strtype(getop(line,1))
+                if (arch(:1)=='C') then
+                    call app('Dws=malloc('//itoa(dwcount)//'*sizeof('//c_type(memsze)//'));')
+                    call app('#define const_SIZEMEM sizeof('//c_type(memsze)//')'//achar(10)//dwlist)
+                end if
+            case ('@MINMEM')
+                call minmem(getop(line,1))
+            case ('@DEFINE')
+                call define(getop(line,1),getop(line,2),vars)
+                tmpstr = getop(line,1)
+                if (tmpstr(:1)/='@') call throw('name of constant must start with @')
+    
+            case ('@MINSTACK')
+                call minstack(getop(line,1))
+            case ('@MINCSTACK')
+                call mincstack(getop(line,1))
+            case ('LLOD',& !memory 
+                 ! unsigned
+                 &'ADD','SUB','MLT','DIV','MOD','BSL','BSR','BGE','BRG','BLE','BRL','BRE','BNE','BRC','BNC','AND','OR','XOR',&
+                 &'NAND','NOR','XNOR','SETGE','SETG','SETLE','SETL','SETE','SETNE','SETC','SETNC',& !unsigned
+                 !signed
+                 &'SDIV','SBSR','SBGE','SBRG','SBLE','SBRL','SBRC','SBNC','SSETGE','SSETG','SSETLE','SSETL','SSETC','SSETNC',&
+                 !real
+                 &'FADD','FSUB','FMLT','FDIV','FMOD','FBGE','FBRG','FBLE','FBRL','FBRE','FBNE','FSETGE','FSETG','FSETLE','FSETL',&
+                 &'FSETE','FSETNE',& !real
+                 ! long real
+                 &'LFADD','LFSUB','LFMLT','LFDIV','LFMOD','LFBGE','LFBRG','LFBLE','LFBRL','LFBRE','LFBNE','LFSETGE','LFSETG',&
+                 &'LFSETLE','LFSETL','LFSETE','LFSETNE')
+                 ! ABS, FABS, NEG, SRSH, MOV, INC, DEC, NOT, BRP, BRN, BRZ, BNZ, FBRZ, FBNZ, PSH, POP, CAL, RET, HLT
+                call standard3Op(tmpstr, getop(line,1), getop(line,2), getop(line,3), vars)
+            case ('MOV',& !general
+                 &'ABS','NEG','LSH','RSH','SRSH','SMOV','INC','DEC','NOT','BRP','BRN','BRZ','BNZ',& !integer
+                 &'FABS','FNEG','FBRP','FBRN','FBRZ','FBNZ',& !real
+                 &'LFABS','LFNEG','LFBRP','LFBRN','LFBRZ','LFBNZ',& !long real
+                 &'ITOF','FTOI','ITOLF','LFTOI','FTOLF','LFTOF') !conversion
+                call standard2Op(tmpstr, getop(line,1), getop(line,2), vars)
+            case ('JMP','CAL',& !control flow
+                 &'PSH','POP') !memory
+                call standard1Op(tmpstr, getop(line,1), vars)
+            case ('RET')
+                call ret()
+            case ('HLT')
+                if (arch(:1)=='C') then
+                    call app('return 0;')
+                else
+                    call app('HLT')
+                end if
+            case ('LSTR')
+                call lstr(getop(line,1), getop(line,2), getop(line, 3), vars)
+            case ('CPY') !CPY now takes an amount to copy (memcpy basically)
+                call lstr(getop(line,1), getop(line,2), getop(line, 3), vars)
+            case ('STR')
+                call str(getop(line,1), getop(line,2), vars)
+            case ('LOD')
+                call lod(getop(line,1), getop(line,2), vars)
+            case ('IMM')
+                call imm(getop(line,1), getop(line,2), vars)
+            case ('DW','D8','D16','D32','DADDR','DREAL','DLREAL')
+                if (arch=='IRI') then
+                    call data(tmpstr,line,vars)
+                else if (arch(:1)/='C') then
+                    call throw('dw not implemented for this architecture')
+                end if
+            case default
+                call throw('unknown instruction "'//tmpstr//'"',.false.)
+            end select
+        end if
+      9 call updatecom(line, comment)
+        end do
+    end subroutine
+
+    subroutine insertTrans(line,tmpstr,vars)
+        character(len=:), allocatable :: line
+        character(len=:), allocatable :: tmpstr
+        type(variable), allocatable :: vars(:)
+        type(trans) translation
+        character(len=:), allocatable :: result
+        integer :: type, j
+        translation = getTrans(tmpstr,line,vars)
+        if (.not.translation%compiled) then
+            stack = [stack, frame(currentLoc=currentLoc, id=unique)]
+            unique = unique + 1
+            stack(currframe)%lnum2 = lnum2
+            stack(currframe)%compiled = compiled
+            stack(currframe)%currentLoc = currentLoc
+            currframe = currframe + 1
+            stack(currframe)%args = translation%argnames
+            allocate(stack(currframe)%types(size(translation%types)))
+            allocate(stack(currframe)%parsed(size(translation%types)))
+            do i=1,size(translation%argnames)
+                stack(currframe)%parsed(i)%value=parseArg(getop(line,i),stack(currframe)%types(i),vars)
+            end do
+            args = stack(currframe)%args
+            parsed = stack(currframe)%parsed
+            types = stack(currframe)%types
+            id = stack(currframe)%id
+            lnum2 = 0
+            call compile(translation%code,vars)
+            if (arch(:1)=='C') then
+                compiled = stack(currframe-1)%compiled//achar(10)//'{'//compiled//achar(10)//'}'
+            else
+                compiled = stack(currframe-1)%compiled//compiled
+            end if
+            stack = stack(:currframe-1)
+            currframe = currframe - 1
+            lnum2 = stack(currframe)%lnum2
+            types = stack(currframe)%types
+            parsed = stack(currframe)%parsed
+            args = stack(currframe)%args
+            id = stack(currframe)%id
+            currentLoc = stack(currframe)%currentLoc
+        else
+            if (arch(:1)=='C') call app('{')
+
+            do i=1,size(translation%code)
+                tmpstr = translation%code(i)%value
+                do j=1,size(translation%argnames)
+                    result = parseArg(getop(line,j),type,vars)
+                    result = result(2:)
+                    tmpstr = replace(tmpstr,translation%argnames(i)%value,result)
+                end do
+                call app(trim(tmpstr))
+            end do
+            if (arch(:1)=='C') call app('}')
+        end if
+    end subroutine
 end

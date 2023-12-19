@@ -11,10 +11,14 @@ module emit
         integer temp, i
         arg = trim(arg)
         if (arg(:1)=='@') then
-            type = 32
-            temp = index(arg(2:),'+')+1
-            if (temp==1.or.temp>index(arg(2:),'-')+1.and.index(arg(2:),'-')/=0) temp = index(arg(2:),'-')+1
-            if (temp==1.or.temp>index(arg,'*').and.index(arg,'*')/=0) temp = index(arg,'*')
+            if (index(arg(2:),'+')==0) then
+                temp = 0
+            else
+                temp = index(arg(2:),'+')+1
+            end if
+            if (temp==0.and.index(arg(2:),'-')/=0.or.(temp>index(arg(2:),'-')+1).and.index(arg(2:),'-')/=0) &
+             temp = index(arg(2:),'-')+1
+            if (temp==0.or.temp>index(arg,'*').and.index(arg,'*')/=0) temp = index(arg,'*')
             if (temp==0.or.temp>index(arg,'/').and.index(arg,'/')/=0) temp = index(arg,'/')
             tmpstr = arg(:temp-1)
             tmpstr2 = arg(temp+1:)
@@ -24,30 +28,26 @@ module emit
                 end if
                 parse = tmpstr2
             else
-                if (arch(:1)=='C') then
-                    parse = 'I('//'const_'//tmpstr//arg(temp:temp)//tmpstr2//')'
-                else
-                    select case (arg(temp:temp))
-                    case ('+')
-                        temp = evalConst(tmpstr) + evalConst(tmpstr2)
-                    case ('-')
-                        temp = evalConst(tmpstr) + evalConst(tmpstr2)
-                    case ('*')
-                        temp = evalConst(tmpstr) * evalConst(tmpstr2)
-                    case ('/')
-                        temp = evalConst(tmpstr) / evalConst(tmpstr2)
-                    end select
-                    parse = repeat(' ', 12)
-                    if (temp>=0.and.temp<2**16) then
-                        if(temp<2**8) then
-                            type=8
-                        else
-                            type=16
-                        end if
+                select case (arg(temp:temp))
+                case ('+')
+                    temp = evalConst(tmpstr) + evalConst(tmpstr2)
+                case ('-')
+                    temp = evalConst(tmpstr) + evalConst(tmpstr2)
+                case ('*')
+                    temp = evalConst(tmpstr) * evalConst(tmpstr2)
+                case ('/')
+                    temp = evalConst(tmpstr) / evalConst(tmpstr2)
+                end select
+                parse = repeat(' ', 12)
+                if (temp>=0.and.temp<2**16) then
+                    if(temp<2**8) then
+                        type=8
+                    else
+                        type=16
                     end if
-                    write(parse,'(I12)') temp
-                    parse = 'I'//trim(adjustl(parse))
                 end if
+                write(parse,'(I12)') temp
+                parse = 'I'//trim(adjustl(parse))
             end if
         else if (arg(:1)=='%') then !port
             type = 4
@@ -58,26 +58,26 @@ module emit
                 read (arg(2:), *) temp
                 allocate(character(len=12) :: parse)
                 write (parse, *) lnum2+temp
-                parse = 'I&&line'//trim(adjustl(parse))
+                parse = 'I&&line'//itoa(id)//'_'//trim(adjustl(parse))
             else if (arch=='IRI') then
                 read (arg(2:), *) temp
                 allocate(character(len=12) :: parse)
                 write (parse, *) lnum2+temp
-                parse = 'I.line'//trim(adjustl(parse))
+                parse = 'I.line'//itoa(id)//'_'//trim(adjustl(parse))
             end if
         else if (index(arg,'.')==0.and.(arg(:1)=='-'.or.arg(:1)=='+'.or.(arg(:1)>='0'.and.arg(:1)<='9'))) then !int
             !handle inline math
-            temp = index(arg(2:),'+')+1
-            if (temp==1.or.temp>index(arg(2:),'-')+1.and.index(arg(2:),'-')/=0) temp = index(arg(2:),'-')+1
-            if (temp==1.or.temp>index(arg,'*').and.index(arg,'*')/=0) temp = index(arg,'*')
+            if (index(arg(2:),'+')==0) then
+                temp = 0
+            else
+                temp = index(arg(2:),'+')+1
+            end if
+            if (temp==0.and.index(arg(2:),'-')/=0.or.(temp>index(arg(2:),'-')+1).and.index(arg(2:),'-')/=0) &
+             temp = index(arg(2:),'-')+1
+            if (temp==0.or.temp>index(arg,'*').and.index(arg,'*')/=0) temp = index(arg,'*')
             if (temp==0.or.temp>index(arg,'/').and.index(arg,'/')/=0) temp = index(arg,'/')
             if (temp/=0) then
-                if (arch(:1)=='C') then
-                    tmpstr = arg(temp+1:)
-                    if (tmpstr(:1)=='@') tmpstr = 'const_'//tmpstr(2:)
-                    type = 32
-                    parse = 'I('//arg(:temp)//tmpstr//')'
-                else if (arch=='IRI') then
+
                     tmpstr2 = arg(temp+1:)
                     tmpstr = arg(:temp-1)
                     select case (arg(temp:temp))
@@ -90,10 +90,13 @@ module emit
                     case ('/')
                         temp = evalConst(tmpstr) / evalConst(tmpstr2)
                     end select
+                    type = 8
+                    if (temp >= 256 .or. temp < -256) type = 16
+                    if (temp >= 65536 .or. temp < -65536) type = 32
                     parse = repeat(' ', 12)
                     write(parse,'(I12)') temp
                     parse = 'I'//trim(adjustl(parse))
-                end if
+
             else
                 type = 0
                 if (index(arg,'I')/=0) then
@@ -127,9 +130,9 @@ module emit
                         return
                     end if
                 end do
-                parse = 'I&&'//'urcl'//arg(2:)
+                parse = 'I&&'//'urcl'//itoa(id)//'_'//arg(2:)
             else
-                parse = 'I.label_'//arg(2:)
+                parse = 'I.label_'//itoa(id)//'_'//arg(2:)
             end if
         else if (arg(:1)=='-'.or.arg(:1)=='+'.or.(arg(:1)>='0'.and.arg(:1)<='9')) then !real
             if (arg(len(trim(arg)):len(trim(arg)))=='d') then !long real
@@ -142,18 +145,25 @@ module emit
         else if (arg(:1)=='M'.and.arg(2:2)>='0'.and.arg(2:2)<='9') then !memory address
             type = 1
             if (arch(:1)=='C') then
-                parse = 'I(mem+'//arg(2:)//')'
+                parse = 'I((void*)mem+'//arg(2:)//'*sizeof('//c_type(memsze)//'))'
             else
                 parse = 'I'//arg
             end if
-        else !variable
+        else !variable or arg
+            do i=1,size(args)
+                if (arg==args(i)%value) then
+                    type = types(i)
+                    parse = parsed(i)%value
+                    return
+                end if
+            end do
             if (getvar_index(vars, arg)/=0) then
                 tmpvar = getvar(vars,arg)
                 type = tmpvar%type
                 parse = 'V'//arg
             else
-                print '(I0,A)', lnum, ': unknown operand type '''//arg//''' (likely undeclared variable)'
-                stop -1, quiet=.true.
+                call throw('unknown operand type '''//arg//''' (likely undeclared variable)')
+                
             end if
         end if
     end function
@@ -192,6 +202,7 @@ module emit
             &'unsigned char v8;',&
             &'unsigned short v16;',&
             &'unsigned int v32;',&
+            &'unsigned long long v64;',&
             &'void* vADDR;',&
             &'float vREAL;',&
             &'double vLREAL;',&
@@ -213,7 +224,7 @@ module emit
 
     subroutine end()
         if (arch(:1)=='C') then
-            write(2,'(A)') '}'
+            write(2,'(A)') 'return 0;', '}'
             if (incopengl) then
                 write(2,'(A)') opengl
             else
@@ -235,9 +246,9 @@ module emit
     subroutine label(arg1)
         character(len=:), allocatable :: arg1
         if (arch(:1)=='C') then
-            call app('urcl'//arg1(2:)//': ;')
+            call app('urcl'//itoa(id)//'_'//arg1(2:)//': ;')
         else if (arch=='IRI') then
-            call app('.label_'//arg1(2:))
+            call app('.label'//itoa(id)//'_'//arg1(2:))
         end if
     end subroutine
 
@@ -245,8 +256,8 @@ module emit
         character(len=:), allocatable :: arg1
         integer :: temp
         if (memdec) then
-            print'(I0,A)', lnum, ': attempt to redefine size of memory'
-            stop -1, quiet=.true.
+            call throw('attempt to redefine size of memory')
+            
         end if
         memdec = .true.
         if (arch(:1)=='C') then
@@ -264,8 +275,8 @@ module emit
     subroutine minstack(arg1)
         character(len=:), allocatable :: arg1
         if (stackdec) then
-            print'(I0,A)', lnum, ': attempt to redefine size of stack'
-            stop -1, quiet=.true.
+            call throw('attempt to redefine size of stack')
+            
         end if
         stackdec = .true.
         if (arch(:1)=='C') then
@@ -277,8 +288,8 @@ module emit
     subroutine mincstack(arg1)
         character(len=:), allocatable :: arg1
         if (cstackdec) then
-            print'(I0,A)', lnum, ': attempt to redefine size of call stack'
-            stop -1, quiet=.true.
+            call throw('attempt to redefine size of call stack')
+            
         end if
         cstackdec = .true.
         if (arch(:1)=='C') then
@@ -319,8 +330,8 @@ module emit
                 typesize = type
             end select
         else
-            print '(A)', 'internal error: typesize not implemented for this architecture'
-            stop -1, quiet=.true.
+            call throw('internal error: typesize not implemented for this architecture')
+            stop !never executed but here to stop gfortran from complaining
         end if
     end function
 
@@ -329,11 +340,11 @@ module emit
         character(len=:), allocatable :: result2
         if (type1/=32) then
             if (type2==32) then
-                print'(I0,A)', lnum, ': arg1 of builtin instruction must be of size 32 if arg2 is size 32 for arch IRIS'
-                stop -1, quiet=.true.
+                call throw('arg1 of builtin instruction must be of size 32 if arg2 is size 32 for arch IRIS')
+                
             end if
             if (type1==8.and.type2/=8) then
-                print'(I0,A)', lnum, ': warning: destination of imm is smaller than immediate size'
+                call throw('warning: destination of imm is smaller than immediate size')
             end if
             if (addr<=18) then
                 if (addr<0) addr=-addr
@@ -364,7 +375,6 @@ module emit
                     call app('STR M'//itoa(addr-19)//' '//itoa(shiftr(int,16)))
                 end if
             else
-                print*,int
                 call app('IMM R'//itoa(-addr)//' '//itoa(iand(int,2**16-1)))
                 call app('IMM R'//itoa(-addr+1)//' '//itoa(shiftr(int,16)))
             end if
@@ -379,11 +389,11 @@ module emit
         result1 = parseArg(arg1, type1, vars)
         result2 = parseArg(arg2, type2, vars) !only 2nd arg type is important
         if (result1(:1)/='V') then
-            print'(I0, A)', lnum, ': arg1 of IMM must be a variable'
-            stop -1, quiet=.true.
+            call throw('arg1 of IMM must be a variable')
+            
         else if (result2(:1)/='I') then
-            print'(I0, A)', lnum, ': arg2 of IMM must be an immediate value'
-            stop -1, quiet=.true.
+            call throw('arg2 of IMM must be an immediate value')
+            
         end if
         result1 = result1(2:)
         result2 = result2(2:)
@@ -468,19 +478,19 @@ module emit
         select case (inst)
         case ('LLOD')
             if (type2/=1) then
-                print'(I0,A)', lnum, ': arg2 of LLOD must be of type ADDR'
-                stop -1, quiet=.true.
+                call throw('arg2 of LLOD must be of type ADDR')
+                
             end if
         case ('BGE','BRG','BLE','BRL','BRE','BNE','BRC','BNC','SBGE','SBRG','SBLE','SBRL','SBRC','SBNC','FBGE',&
              &'FBRG','FBLE','FBRL','FBRE','FBNE','LFBGE','LFBRG','LFBLE','LFBRL','LFBRE','LFBNE')
             if (type1/=1) then
-                print'(I0,A)', lnum, ': arg1 of '//inst//' must be of type ADDR'
-                stop -1, quiet=.true.
+                call throw('arg1 of '//inst//' must be of type ADDR')
+                
             end if
         case default
             if (result1(:1)/='V') then
-                print'(I0,A)', lnum, ': arg1 of '//inst//' must be a variable'
-                stop -1, quiet=.true.
+                call throw('arg1 of '//inst//' must be a variable')
+                
             end if
         end select
         if (arch=='IRI') then
@@ -596,6 +606,14 @@ module emit
                         call app('BRP '//output1//' '//output3u)
                         call app('BRG '//output1//' '//output2//' '//output3)
                     end select
+                end if
+            case ('LLOD')
+                call parseSmall(output2,result2,2,vars)
+                call parseSmall(output3,result3,3,vars)
+                call vars(getvar_index(vars,result1))%set('LLOD '//output2//' '//output3)
+                if (type1==32) then
+                    call app('INC R25 '//output3)
+                    call vars(getvar_index(vars,result1))%set('LLOD '//output2//' R25',.true.)
                 end if
             case ('ADD','SUB','MLT','DIV','MOD','BSL','BSR','SBSR','NOR','AND','XOR')
                 if (type1/=32) then
@@ -845,8 +863,8 @@ module emit
                 result1 = result1(2:)
                 call vars(getvar_index(vars,result1))%set(inst//' '//output2//' '//output3)
             case default
-                print'(I0,A)', lnum, ': unknown instruction '//inst//' for arch IRIS'
-                stop -1, quiet=.true.
+                call throw('unknown instruction '//inst//' for arch IRIS')
+                
             end select
         else if (arch(:1)=='C') then
             result1 = result1(2:)
@@ -855,8 +873,8 @@ module emit
             stype2 = signed_c_type(type2)
             stype3 = signed_c_type(type3)
 
-            if (type2 >= 8 .and. type2 <= 32) type2 = 32
-            if (type3 >= 8 .and. type3 <= 32) type3 = 32
+            if (type2 >= 8 .and. type2 <= 32) type2 = 64
+            if (type3 >= 8 .and. type3 <= 32) type3 = 64
             select case (inst)
             case ('SDIV','SBSR','SBGE','SBRG','SBLE','SBRL','SBRC','SBNC')
                 if (type2==32) then
@@ -872,9 +890,9 @@ module emit
             end select
             select case (inst)
             case ('ADD')
-                call app('tmp1.v32=tmp2.v32+tmp3.v32;')
+                call app('tmp1.v64=tmp2.v64+tmp3.v64;')
             case ('SUB')
-                call app('tmp1.v32=tmp2.v32-tmp3.v32;')
+                call app('tmp1.v64=tmp2.v64-tmp3.v64;')
             case ('MLT')
                 call app('tmp1.v32=tmp2.v32*tmp3.v32;')
             case ('DIV')
@@ -975,10 +993,9 @@ module emit
                 call app('if (tmp2.vLREAL!=tmp3.vLREAL) goto *('//result1//');')
             case ('LLOD')
                 if (.not.memdec) then
-                    print'(I0,A)', lnum, ': size of memory must be declared before use of LLOD'
-                    stop -1, quiet=.true.
+                    call throw('size of memory must be declared before use of LLOD')
                 end if
-                call app('tmp1.v32=*('//c_type(type1)//'*)((long long)tmp2.vADDR+tmp3.v32)')
+                call app('tmp1.v32=*('//c_type(type1)//'*)((long long)tmp2.vADDR+tmp3.v64);')
             end select
             select case (inst)
             case ('BGE','BRG','BLE','BRL','BRE','BNE','BRC','BNC','SBGE','SBRG','SBLE','SBRL','SBRC','SBNC','FBGE','FBRG','FBLE',&
@@ -1001,13 +1018,13 @@ module emit
         select case (inst)
         case ('BRP','BRN','BRZ','BNZ','FBRP','FBRN','FBRZ','FBNZ','LFBRP','LFBRN','LFBRZ','LFBNZ')
             if (type1/=1) then
-                print'(I0,A)', lnum, ': arg1 of '//inst//' must be of type ADDR'
-                stop -1, quiet=.true.
+                call throw('arg1 of '//inst//' must be of type ADDR')
+                
             end if
         case default
             if (result1(:1)/='V') then
-                print'(I0,A)', lnum, ': arg1 of '//inst//' must be a variable'
-                stop -1, quiet=.true.
+                call throw('arg1 of '//inst//' must be a variable')
+                
             end if
         end select
         if (arch=='IRI') then
@@ -1083,8 +1100,8 @@ module emit
                     end select
                 end if
             case default
-                print'(I0,A)', lnum, ': unknown instruction '//inst//' for arch IRIS'
-                stop -1, quiet=.true.
+                call throw('unknown instruction '//inst//' for arch IRIS')
+                
             end select
         else if (arch(:1)=='C') then
             result1 = result1(2:)
@@ -1102,7 +1119,7 @@ module emit
             case ('MOV','SMOV')
                 call app('tmp1.v32=tmp2.v32;')
             case ('ABS')
-                call app('tmp1.v32=abs(tmp2.v32);')
+                call app('tmp1.v32=abs((int)tmp2.v32);')
             case ('NEG')
                 call app('tmp1.v32=-tmp2.v32;')
             case ('LSH')
@@ -1177,31 +1194,31 @@ module emit
         select case (inst)
         case ('CAL')
             if (type1/=1) then
-                print'(I0,A)', lnum, ': arg1 of '//inst//' must be of type ADDR'
-                stop -1, quiet=.true.
+                call throw('arg1 of '//inst//' must be of type ADDR')
+                
             end if
             if (.not.cstackdec) then
-                print'(I0,A)', lnum, ': size of call stack must be declared before use of CAL'
-                stop -1, quiet=.true.
+                call throw('size of call stack must be declared before use of CAL')
+                
             end if
         case ('JMP')
             if (type1/=1) then
-                print'(I0,A)', lnum, ': arg1 of '//inst//' must be of type ADDR'
-                stop -1, quiet=.true.
+                call throw('arg1 of '//inst//' must be of type ADDR')
+                
             end if
         case ('PSH')
             if (.not.stackdec) then
-                print'(I0,A)', lnum, ': size of stack must be declared before use of PSH'
-                stop -1, quiet=.true.
+                call throw('size of stack must be declared before use of PSH')
+                
             end if
         case ('POP')
             if (result1(:1)/='V') then
-                print'(I0,A)', lnum, ': arg1 of POP must be a variable'
-                stop -1, quiet=.true.
+                call throw('arg1 of POP must be a variable')
+                
             end if
             if (.not.stackdec) then
-                print'(I0,A)', lnum, ': size of stack must be declared before use of POP'
-                stop -1, quiet=.true.
+                call throw('size of stack must be declared before use of POP')
+                
             end if
         end select
         if (arch(:1)=='C') then
@@ -1233,8 +1250,8 @@ module emit
                 call parseSmall(output1,result1,2,vars)
                 call app('JMP '//output1)
             case default
-                print'(I0,A)', lnum, ': unknown instruction '//inst//' for arch IRIS'
-                stop -1, quiet=.true.
+                call throw('unknown instruction '//inst//' for arch IRIS')
+                
             end select
         end if
     end subroutine
@@ -1245,14 +1262,14 @@ module emit
         character(len=:), allocatable :: result1, result2
         integer type1, type2
         if (.not.memdec) then
-            print'(I0,A)', lnum, ': size of memory must be declared before use of STR'
-            stop -1, quiet=.true.
+            call throw('size of memory must be declared before use of STR')
+            
         end if
         result1 = parseArg(arg1, type1, vars)
         result2 = parseArg(arg2, type2, vars)
         if (type1/=1) then
-            print'(I0,A)', lnum, ': arg1 of STR must be of size ADDR'
-            stop -1, quiet=.true.
+            call throw('arg1 of STR must be of size ADDR')
+            
         end if
         if (arch(:1)=='C') then
             result1 = result1(2:)
@@ -1267,27 +1284,25 @@ module emit
         character(len=:), allocatable :: result1, result2, result3
         integer type1, type2, type3
         if (.not.memdec) then
-            print'(I0,A)', lnum, ': size of memory must be declared before use of LSTR'
-            stop -1, quiet=.true.
+            call throw('size of memory must be declared before use of LSTR')
+            
         end if
         result1 = parseArg(arg1, type1, vars)
         result2 = parseArg(arg2, type2, vars)
         result3 = parseArg(arg3, type3, vars)
         if (type1/=1) then
-            print'(I0,A)', lnum, ': arg1 of LSTR must be of type ADDR'
-            stop -1, quiet=.true.
+            call throw('arg1 of LSTR must be of type ADDR')
+            
         end if
         if (arch(:1)=='C') then
             result1 = result1(2:)
             result2 = result2(2:)
             result3 = result3(2:)
-            if (type1 >= 8 .and. type1 <= 32) type1 = 32
-            if (type2 >= 8 .and. type2 <= 32) type2 = 32
-            if (type3 >= 8 .and. type3 <= 32) type3 = 32
-            call app('tmp1.v'//trim(typestr(type2))//'='//result2//';')
+            if (type1 >= 8 .and. type1 <= 32) type1 = 64
+            if (type2 >= 8 .and. type2 <= 32) type2 = 64
+            call app('tmp1.v'//trim(typestr(type1))//'='//result1//';')
             call app('tmp2.v'//trim(typestr(type2))//'='//result2//';')
-            call app('tmp3.v'//trim(typestr(type3))//'='//result3//';')
-            call app('*('//c_type(type3)//'*)((int)tmp1.vADDR+tmp2.v32)=tmp3.v32;')
+            call app('*('//c_type(type3)//'*)((long long)tmp1.vADDR+tmp2.v64)='//result3//';')
         end if
     end subroutine
 
@@ -1297,19 +1312,19 @@ module emit
         character(len=:), allocatable :: result1, result2, result3
         integer type1, type2, type3
         if (.not.memdec) then
-            print'(I0,A)', lnum, ': size of memory must be declared before use of CPY'
-            stop -1, quiet=.true.
+            call throw('size of memory must be declared before use of CPY')
+            
         end if
         result1 = parseArg(arg1, type1, vars)
         result2 = parseArg(arg2, type2, vars)
         result3 = parseArg(arg3, type3, vars)
         if (type1/=1) then
-            print'(I0,A)', lnum, ': arg1 of CPY must be of type ADDR'
-            stop -1, quiet=.true.
+            call throw('arg1 of CPY must be of type ADDR')
+            
         end if
         if (type2/=1) then
-            print'(I0,A)', lnum, ': arg2 of CPY must be of type ADDR'
-            stop -1, quiet=.true.
+            call throw('arg2 of CPY must be of type ADDR')
+            
         end if
         if (arch(:1)=='C') then
             result1 = result1(2:)
@@ -1331,14 +1346,14 @@ module emit
         character(len=:), allocatable :: result1, result2, output2
         integer type1, type2
         if (.not.memdec) then
-            print'(I0,A)', lnum, ': size of memory must be declared before use of LOD'
-            stop -1, quiet=.true.
+            call throw('size of memory must be declared before use of LOD')
+            
         end if
         result1 = parseArg(arg1, type1, vars)
         result2 = parseArg(arg2, type2, vars)
         if (type2/=1) then
-            print'(I0,A)', lnum, ': arg2 of LOD must be of size ADDR'
-            stop -1, quiet=.true.
+            call throw('arg2 of LOD must be of size ADDR')
+            
         end if
 
         result1 = result1(2:)
@@ -1354,8 +1369,8 @@ module emit
 
     subroutine ret()
         if (.not.cstackdec) then
-            print'(I0,A)', lnum, ': size of call stack must be declared before use of RET'
-            stop -1, quiet=.true.
+            call throw('size of call stack must be declared before use of RET')
+            
         end if
         if (arch(:1)=='C') then
             call app('csp--;')
@@ -1374,8 +1389,8 @@ module emit
         result1 = parseArg(arg1, type1, vars)
         result2 = parseArg(arg2, type2, vars)
         if (type1/=4) then
-            print'(I0,A)', lnum, ': arg1 of OUT must be a port'
-            stop -1, quiet=.true.
+            call throw('arg1 of OUT must be a port')
+            
         end if
         if (arch(:1)=='C') then
             result2 = result2(2:)
@@ -1396,7 +1411,7 @@ module emit
                 call app('mtx_unlock(mtxptr);')
                 incopengl = .true.
             case default
-                print'(I0,A)', lnum, ': unknown port "'//result2//'" for target C'
+                call throw('unknown port "'//result2//'" for target C')
             end select
         else if (arch=='IRI') then
             select case (result1)
@@ -1439,16 +1454,17 @@ module emit
 
     end subroutine
 
-    subroutine in(arg1,arg2,vars)
+    subroutine in(arg1,arg2,arg3,arg4,vars)
         type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: arg1, arg2
-        character(len=:), allocatable :: result1, result2
+        character(len=:), allocatable :: arg1, arg2, arg3, arg4
+        character(len=:), allocatable :: result1, result2, result3, result4
+        character(len=:), allocatable :: output1, output3, output4
         integer type1, type2
         result1 = parseArg(arg1, type1, vars)
         result2 = parseArg(arg2, type2, vars)
         if (type2/=4) then
-            print'(I0,A)', lnum, ': arg2 of IN must be a port'
-            stop -1, quiet=.true.
+            call throw('arg2 of IN must be a port')
+            
         end if
         if (arch(:1)=='C') then
             result1 = result1(2:)
@@ -1470,8 +1486,16 @@ module emit
                 call app('mtx_lock(mtxptr);'//achar(10)//'tmp1.v32=status;'//achar(10)//'mtx_unlock(mtxptr);')
                 result2 = 'tmp1.v'//trim(typestr(type1))
                 call vars(getvar_index(vars, result1))%set(result2)
+            case ('%PIXEL')
+                result3 = parseArg(arg3, type1, vars)
+                result4 = parseArg(arg4, type1, vars)
+                result3 = result3(2:)
+                result4 = result4(2:)
+                call app('mtx_lock(mtxptr);')
+                call app(result1//' = data['//result3//'*width*4+'//result4//'*4];')
+                call app('mtx_unlock(mtxptr);')
             case default
-                print'(I0,A)', lnum, ': unknown port "'//result2//'" for target C'
+                call throw('unknown port "'//result2//'" for target C')
             end select
         else if (arch=='IRI') then
             result1 = result1(2:)
@@ -1484,8 +1508,16 @@ module emit
                 call vars(getvar_index(vars, result1))%set('IN %Y')
             case ('%EXIT')
                 call vars(getvar_index(vars, result1))%set(' R0')
+            case ('%PIXEL')
+                result3 = parseArg(arg3, type1, vars)
+                result4 = parseArg(arg4, type1, vars)
+                call parseSmall(output1,result1,1,vars)
+                call parseSmall(output3,result3,2,vars)
+                call parseSmall(output4,result4,3,vars)
+                call app('OUT %X '//output3//achar(10)//'OUT %Y '//output4)
+                call app('IN %COLOR '//output1)
             case default
-                print'(I0,A)', lnum, ': unknown port "'//result2//'" for target C'
+                call throw('unknown port "'//result2//'" for target C')
             end select
         end if
     end subroutine
@@ -1543,8 +1575,8 @@ module emit
         type(DW) thing
         type(variable), allocatable :: vars(:)
         integer :: size, type, memszet
-        character(len=256) :: readline
         integer, intent(in) :: pass
+        logical :: done
         if (pass==1) then
             allocate(dws(0),vars(0))
         end if
@@ -1554,16 +1586,16 @@ module emit
         comment = .false.
         dwlist = ''
         prevLine = '' !to shut up gfortran
-      1 line = ''
-      2 read (1, '(A)', advance='no', eor=3, end=4) readline
-        line = line//readline
-        goto 2
-      3 line = line//readline
+        do
+        line = getline(done)
+        if (done) return
         call fixstr(line,comment)
         if (line(:7)=='@MEMSZE ') then
             memszet = strtype(getop(line,1))
             dwmemsze = c_type(memszet)
-            if (pass==2) call app(dwmemsze//'* Dws;')
+            if (pass==2) then
+                call app(dwmemsze//'* Dws;')
+            end if
         else if (pass==1) then
             if (line(:1)=='.') then
                 dwlabel = .true.
@@ -1578,8 +1610,8 @@ module emit
         if (line(:3)=='DW '.or.line(:3)=='D8 '.or.line(:4)=='D16 '.or.line(:4)=='D32 '.or.line(:6)=='DADDR '.or.&
         & line(:6)=='DREAL '.or.line(:7)=='DLREAL ') then
             if (dwmemsze=='') then
-                print'(I0,A)',lnum,': memsize must be declared before dw statments are used'
-                stop -1, quiet=.true.
+                call throw('memsize must be declared before dw statments are used')
+                
             end if
             if (dwlabel) then
                 thing%address = count
@@ -1632,7 +1664,6 @@ module emit
             end do
         end if
         call updatecom(line, comment)
-        goto 1
-      4 continue
+        end do
     end subroutine
 end module

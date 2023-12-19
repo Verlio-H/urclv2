@@ -1,8 +1,6 @@
 module var
     use helper
     implicit none
-    logical, allocatable :: allocated(:)
-
 
     type variable
         character(len=:), allocatable :: name
@@ -53,16 +51,19 @@ module var
                         evalConst = defines(i)%ivalue
                         return
                     else
-                        print'(I0,A)',lnum,': constants must be integers in expressions'
+                        call throw('constants must be integers in expressions',.false.)
                         evalConst = 0
                     end if
                 end if
             end do
-            print'(I0,A)',lnum,': defined constant was not defined'
-        else if (name(:1)>='1'.and.name(:1)<='9') then
+            call throw('defined constant "'//name//'" was not defined',.false.)
+            evalConst = 0
+        else if (name(:1)=='-'.or.name(:1)=='+'.or.(name(:1)>='1'.and.name(:1)<='9')) then
             read(name, *) evalConst
         else
-            print'(I0,A)',lnum,': expected integer constant'
+            print*,name
+            call throw('expected integer constant',.false.)
+            evalConst = 0
         end if
     end function
 
@@ -70,18 +71,14 @@ module var
         character(len=*) :: name
         character(len=:), allocatable :: evalDefine
         integer :: i
-        if (name(:1)/='@') then
-            print'(I0,A)',lnum,': internal error, expected defined constant'
-            stop -1, quiet=.true.
-        end if
+        if (name(:1)/='@') call throw('internal error, expected defined constant')
         do i=1, size(defines)
             if (defines(i)%name==name) then
                 evalDefine = defines(i)%value
                 return
             end if
         end do
-        print'(I0,A)',lnum,': invalid defined constant'
-        stop -1, quiet=.true.
+        call throw('invalid defined constant')
     end function
 
     function strtype(input)
@@ -101,8 +98,8 @@ module var
         case ('LREAL')
             strtype = 3
         case default
-            print '(I0, A)', lnum, ': unknown data type "'//input//'"'
-            stop -1, quiet=.true.
+            call throw('unknown data type "'//input//'"')
+            stop !never executed but here to stop gfortran from complaining
         end select
     end function
 
@@ -110,6 +107,8 @@ module var
         integer, intent(in) :: input
         character(len=5) :: typestr
         select case (input)
+        case (64)
+            typestr = '64'
         case (32)
             typestr = '32'
         case (16)
@@ -123,8 +122,7 @@ module var
         case (3)
             typestr = 'LREAL'
         case default
-            print '(I0, A)', lnum, ': internal error, unknown type number ',input
-            stop -1, quiet=.true.
+            call throw('internal error, unknown type number '//itoa(input))
         end select
     end function
 
@@ -149,9 +147,10 @@ module var
             return
         case (32)
             c_type = 'unsigned int'
+        case (64)
+            c_type = 'unsigned long long'
         case default
-            print '(I0, A)', lnum, ': unsupport data type "', type, '" for c'
-            stop -1, quiet=.true.
+            call throw('unsupported data type "'//itoa(type)//'" for c')
         end select
     end function
 
@@ -177,8 +176,7 @@ module var
         case (32)
             signed_c_type = 'int'
         case default
-            print '(I0, A)', lnum, ': unsupport data type "', type, '" for c'
-            stop -1, quiet=.true.
+            call throw('unsupported data type "'//itoa(type)//'" for c')
         end select
     end function
 
@@ -200,17 +198,13 @@ module var
             if (type==32) currentLoc = currentLoc + 1
             return
         end if
-        print '(A)', 'var creation not implemented for this target'
-        stop -1, quiet=.true.
+        call throw('var creation not implemented for this target')
     end subroutine
 
     integer function var_get(this,arg)
         class(variable) this
         integer, optional :: arg
-        if (.not.present(arg).and.arch=='IRI') then
-            print '(A)', 'Internal error: arg required for var_get on Iris arch'
-            stop -1, quiet=.true.
-        end if
+        if (.not.present(arg).and.arch=='IRI') call throw('internal error: arg required for var_get on Iris arch')
         if (arch=='IRI') then
             if (this%location<18.or.this%location==18.and.this%type/=32) then
                 var_get = this%location
@@ -242,14 +236,14 @@ module var
                     if (this%type==32) call app('LOD R20 M'//itoa(this%location-18))
                     var_get = 19
                 case default
-                    print '(A)', 'invalid arg'
-                    stop -1, quiet=.true.
+                    call throw('invalid arg number')
+                    stop !never executed but here to stop gfortran from complaining
                 end select
                 return
             end if
         else
-            print '(A)', 'var get not implemented for this target'
-            stop -1, quiet=.true.
+            call throw('var get not implemented for this target')
+            stop !never executed but here to stop gfortran from complaining
         end if
     end function
 
@@ -283,7 +277,7 @@ module var
                 end if
             end if
         else
-            print '(A)', 'var set not implemented for this target'
+            call throw('var set not implemented for this target')
         end if
 
     end subroutine
@@ -294,7 +288,7 @@ module var
             this%name=this%name !scuffed way to silence warning
             continue
         else
-            print '(A)', 'var remove not implemented for this target'
+            call throw('var remove not implemented for this target')
         end if
     end subroutine
 end module

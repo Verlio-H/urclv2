@@ -3,6 +3,19 @@ module helper
     use compilervars
     implicit none
    contains
+    function readFile(fname)
+        character(len=*), intent(in) :: fname
+        type(string), allocatable :: readFile(:)
+        logical :: done
+        open(file=fname,unit=3,action='read')
+        do
+            readFile = [readFile, string()]
+            readFile(size(readFile))%value = getline(done,3)
+            ! readFile = [readFile, string(getline(done,3))] this threw an internal compiler error in gfortran lol
+            if (done) exit
+        end do
+        close(3)
+    end function
 
     function itoa(int)
         integer, intent(in) :: int
@@ -16,6 +29,58 @@ module helper
         character(len=*) :: str
         compiled = compiled//achar(10)//str
     end subroutine
+
+    subroutine throw(err,stop)
+        character(len=*) :: err
+        logical, optional :: stop
+        print'(I0,A)',lnum,': '//err
+        if (present(stop)) then
+            if (stop) then
+                stop -1, quiet=.true.
+            end if
+        else
+            stop -1, quiet=.true.
+        end if
+    end subroutine
+
+    function getline(end,unit) result(line)
+        logical, intent(out), optional :: end
+        integer, intent(in), optional :: unit
+        integer :: unitActual
+        character(len=:), allocatable :: line
+        character(len=256) :: readline
+        unitActual = 1
+        if (present(unit)) unitActual = unit
+        line = ''
+      2 read (unitActual, '(A)', advance='no', eor=3, end=999) readline
+        line = line//readline
+        goto 2
+      3 line = line//readline
+        if (present(end)) end = .false.
+        return
+    999 if (present(end)) then
+            end = .true.
+        else
+            call throw('unexpected EOF')
+        end if
+    end
+
+    function replace(source,str1,str2)
+        character(len=:), allocatable, intent(in) :: source, str1, str2
+        character(len=:), allocatable :: replace
+        integer :: i
+        replace = ''
+        i = 1
+        do while (i<=len(source))
+            if (source(i:i+len(str1)-1) == str1) then
+                replace = replace//str2
+                i = i + len(str1)
+            else
+                replace = replace//source(i:i)
+                i = i + 1
+            end if
+        end do
+    end function
 
     subroutine fixstr(line, comment)
         implicit none
@@ -125,8 +190,7 @@ module helper
                     if (line(i+2:i+2)==' ') j = j - 1
                     cycle
                 else
-                    print '(I0, A)', lnum, ': closing comment has no beginning'
-                    stop -1, quiet=.true.
+                    call throw('closing comment has no beginning')
                 end if
             else if (comment) then
                 cycle
@@ -170,11 +234,9 @@ module helper
         else
             getop = ' '
             if (.not.present(error)) then
-                print'(I0,A,I0,A)', lnum, ': missing operand (looking for operand ', num, ')'
-                stop -1, quiet=.true.
+                call throw('missing operand (looking for operand '//itoa(num)//')')
             else if (error) then
-                print'(I0,A,I0,A)', lnum, ': missing operand (looking for operand ', num, ')'
-                stop -1, quiet=.true.
+                call throw('missing operand (looking for operand '//itoa(num)//')')
             end if
             
         end if
