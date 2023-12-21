@@ -60,7 +60,7 @@ module emit
                 allocate(character(len=12) :: parse)
                 write (parse, *) lnum2+temp
                 parse = 'I&&line'//itoa(id)//'_'//trim(adjustl(parse))
-            else if (arch=='IRI') then
+            else if (arch=='IRIS') then
                 read (arg(2:), *) temp
                 allocate(character(len=12) :: parse)
                 write (parse, *) lnum2+temp
@@ -221,7 +221,7 @@ module emit
             write(2,'(A)') 'int run() {',&
             &'union tmp tmp1, tmp2, tmp3;',&
             &'HEADER;'
-        else if (arch=='IRI') then
+        else if (arch=='IRIS') then
             write(2,'(A)') 'BITS 16','MINREG 25'
         else
             print '(A)', 'init not implemented for this architecture'
@@ -236,7 +236,7 @@ module emit
             else
                 write(2,'(A)') 'int main() { run(); }'
             end if
-        else if (arch=='IRI') then
+        else if (arch=='IRIS') then
             write(2,'(A)') 'HLT'
             if (incprint32) then
                 write(2,'(A)') print32
@@ -253,7 +253,7 @@ module emit
         character(len=:), allocatable, intent(in) :: arg1
         if (arch(:1)=='C') then
             call app('urcl'//itoa(id)//'_'//arg1(2:)//': ;')
-        else if (arch=='IRI') then
+        else if (arch=='IRIS') then
             call app('.label'//itoa(id)//'_'//arg1(2:))
         end if
     end subroutine
@@ -268,7 +268,7 @@ module emit
         memdec = .true.
         if (arch(:1)=='C') then
             call app(c_type(memsze)//' mem['//arg1//'];')
-        else if (arch=='IRI') then
+        else if (arch=='IRIS') then
             if (memsze==32) then
                 read (arg1, *) temp
                 call app('MINHEAP '//itoa(temp*2))
@@ -404,7 +404,7 @@ module emit
             call app('tmp1.v'//trim(typestr(type2))//'='//result2//';')
             result2 = 'tmp1.v'//trim(typestr(type1))
             call vars(getvar_index(vars, result1))%set(result2)
-        else if (arch=='IRI') then
+        else if (arch=='IRIS') then
             addr = vars(getvar_index(vars, result1))%location
             call irisimm(addr,result2,type1,type2)
         end if
@@ -412,13 +412,13 @@ module emit
 
     subroutine parseSmall(result,input,arg,vars)
         character(len=:), allocatable, intent(out) :: result
-        character(len=:), allocatable, intent(inout) :: input
+        character(len=:), allocatable, intent(in) :: input
         integer, intent(in) :: arg
         type(variable), allocatable, intent(in) :: vars(:)
         integer :: index
         if (input(:1)=='V') then
-            input = input(2:)
-            index = vars(getvar_index(vars,input))%get(arg)
+            result = input(2:)
+            index = vars(getvar_index(vars,result))%get(arg)
             result = repeat(' ', 11) ! This line can be removed in fortran 2023
             write(result,'(I0)') index
             result = 'R'//trim(adjustl(result))
@@ -429,14 +429,14 @@ module emit
 
     subroutine parseBig(result,resultu,input,arg,vars,type)
         character(len=:), allocatable, intent(out) :: result, resultu
-        character(len=:), allocatable, intent(inout) :: input
+        character(len=:), allocatable, intent(in) :: input
         type(variable), allocatable, intent(in) :: vars(:)
         integer, intent(in) :: arg, type
         integer :: index, temp
 
         if (input(:1)=='V') then
-            input = input(2:)
-            index = vars(getvar_index(vars,input))%get(arg)
+            result = input(2:)
+            index = vars(getvar_index(vars,result))%get(arg)
             result = repeat(' ', 11)
             write(result,'(I0)') index
             result = 'R'//trim(adjustl(result))
@@ -448,12 +448,12 @@ module emit
                 resultu = ''
             end if
         else
-            input = input(2:)
-            if (input(:1)/='M'.and.input(:1)/='.') then
-                if (input(:2)/='0x') then
-                    read(input,*) temp
+            result = input(2:)
+            if (result(:1)/='M'.and.result(:1)/='.') then
+                if (result(:2)/='0x') then
+                    read(result,*) temp
                 else
-                    read(input(3:),'(Z8)') temp
+                    read(result(3:),'(Z8)') temp
                 end if
                 if (type==32.or.temp<0) then
                     result = repeat(' ',11)
@@ -463,11 +463,11 @@ module emit
                     result = trim(adjustl(result))
                     resultu = trim(adjustl(resultu))
                 else
-                    result = input
+                    !result = input
                     resultu = ''
                 end if
             else
-                result = input
+                !result = input
                 resultu = ''
             end if
         end if
@@ -498,7 +498,7 @@ module emit
                 call throw('arg1 of '//inst//' must be a variable')
             end if
         end select
-        if (arch=='IRI') then
+        if (arch=='IRIS') then
             select case (inst)
             case ('BGE','BLE','BRG','BRL','BRE','BNE','BRC','BNC','SBRG','SBRL')
                 if (type2/=32.and.type3/=32) then
@@ -623,12 +623,19 @@ module emit
                 end if
             case ('LLOD')
                 result1 = result1(2:)
+                itemp = iachar(result3(:1))
+                itemp2 = iachar(result3(2:2))
                 call parseSmall(output2,result2,2,vars)
                 call parseSmall(output3,result3,3,vars)
                 call vars(getvar_index(vars,result1))%set('LLOD '//output2//' '//output3)
                 if (type1==32) then
-                    call app('INC R25 '//output3)
-                    call vars(getvar_index(vars,result1))%set('LLOD '//output2//' R25',.true.)
+                    if (achar(itemp)=='V'.or.achar(itemp2)=='.'.or.achar(itemp2)=='M') then
+                        call app('INC R25 '//output3)
+                        call vars(getvar_index(vars,result1))%set('LLOD '//output2//' R25',.true.)
+                    else
+                        read(output3,*) itemp
+                        call vars(getvar_index(vars,result1))%set('LLOD '//output2//' '//itoa(itemp+1),.true.)
+                    end if
                 end if
             case ('ADD','SUB','MLT','DIV','MOD','BSL','BSR','SBSR','NOR','AND','XOR')
                 if (type1/=32) then
@@ -1052,7 +1059,7 @@ module emit
                 
             end if
         end select
-        if (arch=='IRI') then
+        if (arch=='IRIS') then
             select case (inst)
             case ('MOV','INC','LSH','NEG','NOT','ITOF','FTOI')
                 result1 = result1(2:)
@@ -1070,6 +1077,13 @@ module emit
                             call vars(getvar_index(vars, result1))%set(' R0',.true.)
                         end if
                     case ('INC')
+                        if (result2(2:)/=result1(2:)) then
+                            if (output2u=='') then
+                                call vars(getvar_index(vars, result1))%set(' R0',.true.)
+                            else
+                                call vars(getvar_index(vars, result1))%set(' '//output2u,.true.)
+                            end if
+                        end if
                         call app('BNC .unique'//itoa(unique)//' '//output2//' 1')
                         if (output2u/='') then
                             call vars(getvar_index(vars, result1))%set('INC '//output2u,.true.)
@@ -1270,7 +1284,7 @@ module emit
                 call app('sp-=1+(sizeof('//c_type(tmp)//')-1)/sizeof('//c_type(memsze)//');')
                 call app(result1//'=*('//c_type(tmp)//'*)sp;')
             end select
-        else if (arch=='IRI') then
+        else if (arch=='IRIS') then
             select case (inst)
             case ('CAL')
                 call parseSmall(output1,result1,2,vars)
@@ -1305,7 +1319,7 @@ module emit
             result1 = result1(2:)
             result2 = result2(2:)
             call app('*('//c_type(type2)//'*)'//result1//'='//result2//';')
-        else if (arch=='IRI') then
+        else if (arch=='IRIS') then
             call parseSmall(output1,result1,1,vars)
             output2 = result2(:1) ! var missused here
             result2 = result2(2:)
@@ -1333,7 +1347,7 @@ module emit
         character(len=:), allocatable, intent(in) :: arg1, arg2, arg3
         character(len=:), allocatable :: result1, result2, result3
         character(len=:), allocatable :: output1, output2, output3, output3u
-        integer type1, type2, type3
+        integer type1, type2, type3, itemp, itemp2
         if (.not.memdec) then
             call throw('size of memory must be declared before use of LSTR')
         end if
@@ -1352,14 +1366,21 @@ module emit
             call app('tmp1.v'//trim(typestr(type1))//'='//result1//';')
             call app('tmp2.v'//trim(typestr(type2))//'='//result2//';')
             call app('*('//c_type(type3)//'*)((long long)tmp1.vADDR+tmp2.v64)='//result3//';')
-        else if (arch=='IRI') then
+        else if (arch=='IRIS') then
+            itemp = iachar(result2(:1))
+            itemp2 = iachar(result2(2:2))
             call parseSmall(output1,result1,1,vars)
             call parseSmall(output2,result2,2,vars)
             call parseBig(output3,output3u,result3,3,vars,type3)
             call app('LSTR '//output1//' '//output2//' '//output3)
             if (type3==32) then
-                call app('INC R25 '//output2)
-                call app('LSTR '//output1//' R25 '//output3u)
+                if (achar(itemp)=='V'.or.achar(itemp2)=='.'.or.achar(itemp2)=='M') then
+                    call app('INC R25 '//output2)
+                    call app('LSTR '//output1//' R25 '//output3u)
+                else
+                    read(output2,*) itemp
+                    call app('LSTR '//output1//' '//itoa(itemp+1)//' '//output3u)
+                end if
             end if
         end if
     end subroutine
@@ -1418,7 +1439,7 @@ module emit
         if (arch(:1)=='C') then
             result2 = result2(2:)
             call app(result1//'=*('//c_type(type1)//'*)'//result2//';')
-        else if (arch=='IRI') then
+        else if (arch=='IRIS') then
             call parseSmall(output2,result2,2,vars)
             call vars(getvar_index(vars, result1))%set('LOD '//output2)
             if (type1==32) call vars(getvar_index(vars, result1))%set('LLOD 1 '//output2,.true.)
@@ -1433,7 +1454,7 @@ module emit
         if (arch(:1)=='C') then
             call app('csp--;')
             call app('goto *cstack[csp];')
-        else if (arch=='IRI') then
+        else if (arch=='IRIS') then
             call app('HRET')
         end if
     end subroutine
@@ -1471,7 +1492,7 @@ module emit
             case default
                 call throw('unknown port "'//result2//'" for target C')
             end select
-        else if (arch=='IRI') then
+        else if (arch=='IRIS') then
             select case (result1)
             case ('%TEXT')
                 call parseSmall(output2,result2,2,vars)
@@ -1555,7 +1576,7 @@ module emit
             case default
                 call throw('unknown port "'//result2//'" for target C')
             end select
-        else if (arch=='IRI') then
+        else if (arch=='IRIS') then
             result1 = result1(2:)
             select case (result2)
             case ('%TEXT')

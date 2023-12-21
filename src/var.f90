@@ -189,7 +189,7 @@ module var
             this%type = int(type, 1)
             this%name = trim(name)
             return
-        else if (arch=='IRI') then
+        else if (arch=='IRIS') then
             call app('//var created at '//itoa(currentLoc))
             this%type = int(type,1)
             this%name = trim(name)
@@ -204,8 +204,8 @@ module var
     integer function var_get(this,arg)
         class(variable), intent(in) :: this
         integer, intent(in), optional :: arg
-        if (.not.present(arg).and.arch=='IRI') call throw('internal error: arg required for var_get on Iris arch')
-        if (arch=='IRI') then
+        if (.not.present(arg).and.arch=='IRIS') call throw('internal error: arg required for var_get on Iris arch')
+        if (arch=='IRIS') then
             if (this%location<18.or.this%location==18.and.this%type/=32) then
                 var_get = this%location
                 return
@@ -258,7 +258,7 @@ module var
         end if
         if (arch(:1) == 'C') then
             call app(this%name//'='//src//';')
-        else if (arch=='IRI') then
+        else if (arch=='IRIS') then
             if (this%location+upperActual<=18) then
                 if (index(src,' ')/=1) then
                     call app(src(:index(src,' '))//'R'//itoa(this%location+upperActual)//src(index(src,' '):))

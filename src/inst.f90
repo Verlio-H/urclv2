@@ -148,7 +148,7 @@ contains
                     call updatecom(line,comment)
                     return
                 end if
-            else if (arch=='IRI') then
+            else if (arch=='IRIS') then
                 if (arg/='URCL'.and.arg/='IRIS') then
                     translations = translations(:size(translations)-1)
                     line = getline(debug=144)

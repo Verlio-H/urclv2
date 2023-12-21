@@ -73,7 +73,7 @@
 !  IN%EXIT ! fetch any critical errors
 module compilervars
     use includes, only: print32,div32,opengl
-    ! C  , IRI
+    ! C   ,IRIS,SILK
     type string
         character(len=:), allocatable :: value
     end type
@@ -87,21 +87,29 @@ module compilervars
         logical :: int = .false.
         integer :: ivalue = 0
     end type
-    character(len=3) :: arch
+
+    character(len=4) :: arch
+
     integer :: memsze
+
     integer :: lnum
     integer :: lnum2
+
     integer :: unique = 0
+
     type(DW), allocatable :: dws(:)
     type(Defined), allocatable :: defines(:)
+
     logical :: memdec = .false.
     logical :: stackdec = .false.
     logical :: cstackdec = .false.
-    integer :: currentLoc = 1
+
     logical :: incprint32 = .false.
     logical :: incdiv32 = .false.
     logical :: incopengl = .false.
+
     integer :: currframe = 1
+    integer :: currentLoc = 1
     integer :: id
     character(len=:), allocatable :: compiled
 
@@ -125,7 +133,7 @@ program compiler
 
     lnum = 0
     lnum2 = 0
-    arch = 'IRI'
+    arch = 'IRIS'
     memsze = 8
     ! get arguments
     ifile = 'input.urcl'
@@ -181,7 +189,7 @@ program compiler
         defines(6)%value = '8'
         defines(6)%int = .true.
         defines(6)%ivalue = 8
-    else if (arch=='IRI') then
+    else if (arch=='IRIS') then
         defines(1)%name = '@SIZE8'
         defines(1)%value = '1'
         defines(1)%int = .true.
@@ -291,7 +299,7 @@ contains
                     lnum2 = lnum2 + 1
                     call app('line'//itoa(id)//'_'//itoa(lnum2)//': ;')
                 end select
-            else if (arch=='IRI'.and.(tmpstr/=''.and.tmpstr(:1)/='@')) then
+            else if (arch=='IRIS'.and.(tmpstr/=''.and.tmpstr(:1)/='@')) then
                 select case (tmpstr)
                 case ('D8','D16','D32','DREAL','DLREAL','DADDR','DW')
                 case default
@@ -380,7 +388,7 @@ contains
             case ('IMM')
                 call imm(getop(line,1), getop(line,2), vars)
             case ('DW','D8','D16','D32','DADDR','DREAL','DLREAL')
-                if (arch=='IRI') then
+                if (arch=='IRIS') then
                     call data(tmpstr,line,vars)
                 else if (arch(:1)/='C') then
                     call throw('dw not implemented for this architecture')
@@ -446,7 +454,7 @@ contains
 
             do i=1,size(translation%argnames)
                 result=parseArg(getop(line,i),type,vars)
-                if (arch=='IRI') then
+                if (arch=='IRIS') then
                     if (type==32) then
                         call parseBig(results(i,1)%value,results(i,2)%value,result,i,vars,type)
                     else
@@ -460,7 +468,7 @@ contains
             do i=1,size(translation%code)
                 result = translation%code(i)%value
                 do j=1,size(translation%argnames)
-                    if (arch=='IRI') then
+                    if (arch=='IRIS') then
                         result = replace(result,translation%argnames(j)%value//'U',results(j,2)%value)
                     end if
                     result = replace(result,translation%argnames(j)%value,results(j,1)%value)
