@@ -36,7 +36,7 @@ contains
     end subroutine
 
     logical function transExists(name)
-        character(len=*) :: name
+        character(len=*), intent(in) :: name
         integer :: i
         do i=1,size(translations)
             if (translations(i)%name==name) then
@@ -47,24 +47,24 @@ contains
         transExists = .false.
     end function
     
-    subroutine inststart(name)
-        character(len=*) :: name
+    subroutine inststart(name,comment)
+        character(len=*), intent(in) :: name
+        logical, intent(inout) :: comment
         if (transExists(name)) call throw('instruction with this name already declared')
         instName = name
         parseinst: block
             character(len=:), allocatable :: line, instruction
-            logical :: comment
-            comment = .false.
             do
             line = getline()
             lnum = lnum + 1
-            call fixstr(line, comment)
+            call fixstr(line,comment)
             instruction = getop(line,0,.false.)
+            call updatecom(line,comment)
             if (instruction=='') cycle
             if (instruction(:1)/='@') call throw('unexpected executable statement in instruction definition')
             select case (instruction)
             case ('@TRANS')
-                call starttrans(line)
+                call starttrans(line,comment)
             case ('@ENDINST')
                 exit parseInst
             case ('@ENDTRANS')
@@ -80,11 +80,11 @@ contains
         end block parseInst
     end subroutine
 
-    subroutine starttrans(arguments)
-        character(len=:), allocatable :: arguments, line, op, arg, tmpstr
-        logical :: comment
+    subroutine starttrans(arguments,comment)
+        character(len=:), intent(in), allocatable :: arguments
+        logical, intent(inout) :: comment
+        character(len=:), allocatable :: line, op, arg, tmpstr
         integer :: i
-        comment = .false.
         translations = [translations, Trans()]
         associate (this => translations(size(translations)))
         this%name = instName
@@ -103,6 +103,7 @@ contains
         lnum = lnum + 1
         call fixstr(line, comment)
         op = getop(line,0,.false.)
+        call updatecom(line,comment)
         if (op(:1)/='@') call throw('unexpected executable statement in translation definition')
         select case (op)
         case ('@START')
@@ -113,6 +114,7 @@ contains
             tmpstr = line
             call fixstr(tmpstr,comment)
             if (getop(tmpstr,0,.false.)=='@ENDTRANS') exit
+            call updatecom(line,comment)
             this%code = [this%code, string(line)]
             end do
             return
@@ -129,25 +131,41 @@ contains
             if (arch(:1)=='C') then
                 if (arg/='C') then
                     translations = translations(:size(translations)-1)
-                    line = getline()
+                    line = getline(debug=133)
                     lnum = lnum + 1
+                    call fixstr(line,comment)
                     do while (getop(line,0,.false.)/='@ENDTRANS')
-                        line = getline()
+                        call updatecom(line,comment)
+                        line = getline(debug=136)
                         lnum = lnum + 1
+                        call fixstr(line,comment)
+                        if (getop(line,0,.false.)=='@ENDINST') then
+                            call throw('erroneous @endinst, expected @endtrans')
+                        else if (getop(line,0,.false.)=='@INST') then
+                            call throw('@inst cannot be nested')
+                        end if
                     end do
+                    call updatecom(line,comment)
                     return
                 end if
             else if (arch=='IRI') then
                 if (arg/='URCL'.and.arg/='IRIS') then
                     translations = translations(:size(translations)-1)
-                    line = getline()
-                    call fixstr(line,comment)
+                    line = getline(debug=144)
                     lnum = lnum + 1
+                    call fixstr(line,comment)
                     do while (getop(line,0,.false.)/='@ENDTRANS')
-                        line = getline()
-                        call fixstr(line,comment)
+                        call updatecom(line,comment)
+                        line = getline(debug=148)
                         lnum = lnum + 1
+                        call fixstr(line,comment)
+                        if (getop(line,0,.false.)=='@ENDINST') then
+                            call throw('erroneous @endinst, expected @endtrans')
+                        else if (getop(line,0,.false.)=='@INST') then
+                            call throw('@inst cannot be nested')
+                        end if
                     end do
+                    call updatecom(line,comment)
                     return
                 end if
             end if

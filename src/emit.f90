@@ -3,13 +3,14 @@ module emit
     implicit none
 
    contains
-    recursive function parseArg(arg, type, vars) result(parse)
-        character(len=:), allocatable :: arg, parse, tmpstr,tmpstr2
-        type(variable), allocatable :: vars(:)
-        integer :: type
+    recursive function parseArg(argInput, type, vars) result(parse)
+        character(len=:), allocatable, intent(in) :: argInput
+        integer, intent(out) :: type
+        type(variable), allocatable, intent(in) :: vars(:)
+        character(len=:), allocatable :: parse, tmpstr, tmpstr2, arg
         type(variable) :: tmpvar
         integer temp, i
-        arg = trim(arg)
+        arg = trim(argInput)
         if (arg(:1)=='@') then
             if (index(arg(2:),'+')==0) then
                 temp = 0
@@ -132,7 +133,7 @@ module emit
                 end do
                 parse = 'I&&'//'urcl'//itoa(id)//'_'//arg(2:)
             else
-                parse = 'I.label_'//itoa(id)//'_'//arg(2:)
+                parse = 'I.label'//itoa(id)//'_'//arg(2:)
             end if
         else if (arg(:1)=='-'.or.arg(:1)=='+'.or.(arg(:1)>='0'.and.arg(:1)<='9')) then !real
             if (arg(len(trim(arg)):len(trim(arg)))=='d') then !long real
@@ -147,7 +148,12 @@ module emit
             if (arch(:1)=='C') then
                 parse = 'I((void*)mem+'//arg(2:)//'*sizeof('//c_type(memsze)//'))'
             else
-                parse = 'I'//arg
+                if (memsze/=32) then
+                    parse = 'I'//arg
+                else
+                    read(arg(2:),*) temp
+                    parse = 'IM'//itoa(temp*2)
+                end if
             end if
         else !variable or arg
             do i=1,size(args)
@@ -244,7 +250,7 @@ module emit
     end subroutine
 
     subroutine label(arg1)
-        character(len=:), allocatable :: arg1
+        character(len=:), allocatable, intent(in) :: arg1
         if (arch(:1)=='C') then
             call app('urcl'//itoa(id)//'_'//arg1(2:)//': ;')
         else if (arch=='IRI') then
@@ -253,7 +259,7 @@ module emit
     end subroutine
 
     subroutine minmem(arg1)
-        character(len=:), allocatable :: arg1
+        character(len=:), allocatable, intent(in) :: arg1
         integer :: temp
         if (memdec) then
             call throw('attempt to redefine size of memory')
@@ -273,7 +279,7 @@ module emit
     end subroutine
 
     subroutine minstack(arg1)
-        character(len=:), allocatable :: arg1
+        character(len=:), allocatable, intent(in) :: arg1
         if (stackdec) then
             call throw('attempt to redefine size of stack')
             
@@ -286,7 +292,7 @@ module emit
     end subroutine
 
     subroutine mincstack(arg1)
-        character(len=:), allocatable :: arg1
+        character(len=:), allocatable, intent(in) :: arg1
         if (cstackdec) then
             call throw('attempt to redefine size of call stack')
             
@@ -299,10 +305,11 @@ module emit
     end subroutine
 
     subroutine define(name, value, vars)
-        character(len=:), allocatable :: name
-        character(len=:), allocatable :: value
+        character(len=:), allocatable, intent(in) :: name
+        character(len=:), allocatable, intent(in) :: value
+        type(variable), allocatable, intent(in) :: vars(:)
+
         character(len=:), allocatable :: result
-        type(variable), allocatable :: vars(:)
         type(defined) :: tdefine
         integer :: type
         result = parseArg(value, type, vars)
@@ -317,7 +324,7 @@ module emit
     end subroutine
 
     integer function typesize(type)
-        integer type
+        integer, intent(in) :: type
         if (arch(:1)=='C') then
             select case (type)
             case (1)
@@ -336,8 +343,9 @@ module emit
     end function
 
     subroutine irisimm(addr,result2,type1,type2)
-        integer :: addr,type1,type2,int
-        character(len=:), allocatable :: result2
+        integer, intent(in) :: addr, type1, type2
+        character(len=:), allocatable, intent(in) :: result2
+        integer :: int
         if (type1/=32) then
             if (type2==32) then
                 call throw('arg1 of builtin instruction must be of size 32 if arg2 is size 32 for arch IRIS')
@@ -347,7 +355,6 @@ module emit
                 call throw('warning: destination of imm is smaller than immediate size')
             end if
             if (addr<=18) then
-                if (addr<0) addr=-addr
                 if (type1==8.and.type2/=8) then
                     call app('IMM R'//itoa(addr)//' '//result2//' 0xFF')
                 else
@@ -363,27 +370,22 @@ module emit
             end if
         else
             read(result2,*) int
-            if (addr>0) then
-                if (addr<=19) then
-                    call app('IMM R'//itoa(addr)//' '//itoa(iand(int,2**16-1)))
-                else
-                    call app('STR M'//itoa(addr-20)//' '//itoa(iand(int,2**16-1)))
-                end if
-                if (addr<=18) then
-                    call app('IMM R'//itoa(addr+1)//' '//itoa(shiftr(int,16)))
-                else
-                    call app('STR M'//itoa(addr-19)//' '//itoa(shiftr(int,16)))
-                end if
+            if (addr<=19) then
+                call app('IMM R'//itoa(addr)//' '//itoa(iand(int,2**16-1)))
             else
-                call app('IMM R'//itoa(-addr)//' '//itoa(iand(int,2**16-1)))
-                call app('IMM R'//itoa(-addr+1)//' '//itoa(shiftr(int,16)))
+                call app('STR M'//itoa(addr-20)//' '//itoa(iand(int,2**16-1)))
+            end if
+            if (addr<=18) then
+                call app('IMM R'//itoa(addr+1)//' '//itoa(shiftr(int,16)))
+            else
+                call app('STR M'//itoa(addr-19)//' '//itoa(shiftr(int,16)))
             end if
         end if
     end subroutine
 
     subroutine imm(arg1,arg2,vars)
-        type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: arg1, arg2
+        type(variable), allocatable, intent(in) :: vars(:)
+        character(len=:), allocatable, intent(in) :: arg1, arg2
         character(len=:), allocatable :: result1, result2
         integer type1, type2, addr
         result1 = parseArg(arg1, type1, vars)
@@ -409,10 +411,10 @@ module emit
     end subroutine
 
     subroutine parseSmall(result,input,arg,vars)
-        type(variable), allocatable :: vars(:)
         character(len=:), allocatable, intent(out) :: result
         character(len=:), allocatable, intent(inout) :: input
         integer, intent(in) :: arg
+        type(variable), allocatable, intent(in) :: vars(:)
         integer :: index
         if (input(:1)=='V') then
             input = input(2:)
@@ -426,11 +428,12 @@ module emit
     end subroutine
 
     subroutine parseBig(result,resultu,input,arg,vars,type)
-        type(variable), allocatable :: vars(:)
         character(len=:), allocatable, intent(out) :: result, resultu
         character(len=:), allocatable, intent(inout) :: input
+        type(variable), allocatable, intent(in) :: vars(:)
         integer, intent(in) :: arg, type
         integer :: index, temp
+
         if (input(:1)=='V') then
             input = input(2:)
             index = vars(getvar_index(vars,input))%get(arg)
@@ -446,18 +449,23 @@ module emit
             end if
         else
             input = input(2:)
-            if (input(:2)/='0x') then
-                read(input,*) temp
-            else
-                read(input(3:),'(Z8)') temp
-            end if
-            if (type==32.or.temp<0) then
-                result = repeat(' ',11)
-                write(result,'(I0)') iand(temp,2**16-1)
-                resultu = repeat(' ',11)
-                write(resultu,'(I0)') shiftr(temp,16)
-                result = trim(adjustl(result))
-                resultu = trim(adjustl(resultu))
+            if (input(:1)/='M'.and.input(:1)/='.') then
+                if (input(:2)/='0x') then
+                    read(input,*) temp
+                else
+                    read(input(3:),'(Z8)') temp
+                end if
+                if (type==32.or.temp<0) then
+                    result = repeat(' ',11)
+                    write(result,'(I0)') iand(temp,2**16-1)
+                    resultu = repeat(' ',11)
+                    write(resultu,'(I0)') shiftr(temp,16)
+                    result = trim(adjustl(result))
+                    resultu = trim(adjustl(resultu))
+                else
+                    result = input
+                    resultu = ''
+                end if
             else
                 result = input
                 resultu = ''
@@ -466,8 +474,8 @@ module emit
     end subroutine
 
     subroutine standard3Op(inst, arg1, arg2, arg3, vars)
-        type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: inst, arg1, arg2, arg3
+        type(variable), allocatable, intent(in) :: vars(:)
+        character(len=:), allocatable, intent(in) :: inst, arg1, arg2, arg3
         character(len=:), allocatable :: result1, result2, result3, stype2, stype3
         character(len=:), allocatable :: output1, output2, output3
         character(len=:), allocatable :: output1u, output2u, output3u
@@ -479,23 +487,20 @@ module emit
         case ('LLOD')
             if (type2/=1) then
                 call throw('arg2 of LLOD must be of type ADDR')
-                
             end if
         case ('BGE','BRG','BLE','BRL','BRE','BNE','BRC','BNC','SBGE','SBRG','SBLE','SBRL','SBRC','SBNC','FBGE',&
              &'FBRG','FBLE','FBRL','FBRE','FBNE','LFBGE','LFBRG','LFBLE','LFBRL','LFBRE','LFBNE')
             if (type1/=1) then
                 call throw('arg1 of '//inst//' must be of type ADDR')
-                
             end if
         case default
             if (result1(:1)/='V') then
                 call throw('arg1 of '//inst//' must be a variable')
-                
             end if
         end select
         if (arch=='IRI') then
             select case (inst)
-            case ('BGE','BLE','BRE','BRG','BRL','BRC','BNC','SBRG','SBRL')
+            case ('BGE','BLE','BRG','BRL','BRE','BNE','BRC','BNC','SBRG','SBRL')
                 if (type2/=32.and.type3/=32) then
                     call parseSmall(output1,result1,1,vars)
                     call parseSmall(output2,result2,2,vars)
@@ -536,15 +541,6 @@ module emit
                             call app('BNZ '//output1//' '//output3u)
                         end if
                         call app('BLE '//output1//' '//output2//' '//output3)
-                    case ('BRE')
-                        if (output2u/=''.and.output3u/='') then
-                            call app('BNE ~+2 '//output2u//' '//output3u)
-                        else if (output3u=='') then
-                            call app('BNE ~+2 '//output2u//' R0')
-                        else if (output2u=='') then
-                            call app('BNE ~+2 '//output3u//' R0')
-                        end if
-                        call app('BRE '//output1//' '//output2//' '//output3)
                     case ('BRL')
                         if (output2u/=''.and.output3u/='') then
                             call app('BRL '//output1//' '//output2u//' '//output3u)
@@ -555,6 +551,24 @@ module emit
                             call app('BNZ '//output1//' '//output3u)
                         end if
                         call app('BRL '//output1//' '//output2//' '//output3)
+                    case ('BRE')
+                        if (output2u/=''.and.output3u/='') then
+                            call app('BNE ~+2 '//output2u//' '//output3u)
+                        else if (output3u=='') then
+                            call app('BNE ~+2 '//output2u//' R0')
+                        else if (output2u=='') then
+                            call app('BNE ~+2 '//output3u//' R0')
+                        end if
+                        call app('BRE '//output1//' '//output2//' '//output3)
+                    case ('BNE')
+                        if (output2u/=''.and.output3u/='') then
+                            call app('BNE '//output1//' '//output2u//' '//output3u)
+                        else if (output3u=='') then
+                            call app('BNE '//output1//' '//output2u//' R0')
+                        else if (output2u=='') then
+                            call app('BNE '//output1//' '//output3u//' R0')
+                        end if
+                        call app('BNE '//output1//' '//output2//' '//output3)
                     case ('BRC')
                         if (output2u/=''.and.output3u/='') then
                             call app('BRC '//output1//' '//output2u//' '//output3u)
@@ -608,6 +622,7 @@ module emit
                     end select
                 end if
             case ('LLOD')
+                result1 = result1(2:)
                 call parseSmall(output2,result2,2,vars)
                 call parseSmall(output3,result3,3,vars)
                 call vars(getvar_index(vars,result1))%set('LLOD '//output2//' '//output3)
@@ -842,7 +857,7 @@ module emit
                     case ('AND')
                         call vars(getvar_index(vars,result1))%set('AND '//output2//' '//output3)
                         if (output2u/=''.and.output3u/='') then
-                            call vars(getvar_index(vars,result1))%set('NOR '//output2u//' '//output3u,.true.)
+                            call vars(getvar_index(vars,result1))%set('AND '//output2u//' '//output3u,.true.)
                         else
                             call vars(getvar_index(vars,result1))%set(' R0',.true.)
                         end if
@@ -1008,8 +1023,8 @@ module emit
     end subroutine
 
     subroutine standard2Op(inst, arg1,arg2,vars)
-        type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: arg1, arg2, inst
+        type(variable), allocatable, intent(in) :: vars(:)
+        character(len=:), allocatable, intent(in) :: arg1, arg2, inst
         character(len=:), allocatable :: result1, result2, stype2
         character(len=:), allocatable :: output1, output2, output2u
         integer type1, type2
@@ -1039,7 +1054,11 @@ module emit
                     select case (inst)
                     case ('MOV')
                         call vars(getvar_index(vars, result1))%set(' '//output2)
-                        call vars(getvar_index(vars, result1))%set(' '//output2u,.true.)
+                        if (output2u/='') then
+                            call vars(getvar_index(vars, result1))%set(' '//output2u,.true.)
+                        else
+                            call vars(getvar_index(vars, result1))%set(' R0',.true.)
+                        end if
                     case ('INC')
                         call app('BNC .unique'//itoa(unique)//' '//output2//' 1')
                         if (output2u/='') then
@@ -1185,8 +1204,8 @@ module emit
     end subroutine
 
     subroutine standard1Op(inst,arg1,vars)
-        type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: arg1, inst
+        type(variable), allocatable, intent(in) :: vars(:)
+        character(len=:), allocatable, intent(in) :: arg1, inst
         character(len=:), allocatable :: result1, output1
         integer type1
         integer tmp
@@ -1257,9 +1276,10 @@ module emit
     end subroutine
 
     subroutine str(arg1,arg2,vars)
-        type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: arg1, arg2
+        type(variable), allocatable, intent(in) :: vars(:)
+        character(len=:), allocatable, intent(in) :: arg1, arg2
         character(len=:), allocatable :: result1, result2
+        character(len=:), allocatable :: output1, output2, output2u
         integer type1, type2
         if (.not.memdec) then
             call throw('size of memory must be declared before use of STR')
@@ -1275,24 +1295,43 @@ module emit
             result1 = result1(2:)
             result2 = result2(2:)
             call app('*('//c_type(type2)//'*)'//result1//'='//result2//';')
+        else if (arch=='IRI') then
+            call parseSmall(output1,result1,1,vars)
+            output2 = result2(:1) ! var missused here
+            result2 = result2(2:)
+            if (output2=='V') then
+                if (vars(getvar_index(vars, result2))%location>=19) then
+                    call app('CPY '//output1//' '//itoa(vars(getvar_index(vars, result2))%location))
+                    if (type2==32) then
+                        call app('INC R25 '//output1)
+                        call app('CPY R25 '//itoa(vars(getvar_index(vars, result2))%location+1))
+                    end if
+                    return
+                end if
+            end if
+            result2 = output2//result2
+            call parseBig(output2,output2u,result2,2,vars,type2)
+            call app('STR '//output1//' '//output2)
+            if (type2==32) then
+                call app('LSTR '//output1//' 1 '//output2u)
+            end if
         end if
     end subroutine
 
     subroutine lstr(arg1,arg2,arg3,vars)
-        type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: arg1, arg2, arg3
+        type(variable), allocatable, intent(in) :: vars(:)
+        character(len=:), allocatable, intent(in) :: arg1, arg2, arg3
         character(len=:), allocatable :: result1, result2, result3
+        character(len=:), allocatable :: output1, output2, output3, output3u
         integer type1, type2, type3
         if (.not.memdec) then
             call throw('size of memory must be declared before use of LSTR')
-            
         end if
         result1 = parseArg(arg1, type1, vars)
         result2 = parseArg(arg2, type2, vars)
         result3 = parseArg(arg3, type3, vars)
         if (type1/=1) then
             call throw('arg1 of LSTR must be of type ADDR')
-            
         end if
         if (arch(:1)=='C') then
             result1 = result1(2:)
@@ -1303,12 +1342,21 @@ module emit
             call app('tmp1.v'//trim(typestr(type1))//'='//result1//';')
             call app('tmp2.v'//trim(typestr(type2))//'='//result2//';')
             call app('*('//c_type(type3)//'*)((long long)tmp1.vADDR+tmp2.v64)='//result3//';')
+        else if (arch=='IRI') then
+            call parseSmall(output1,result1,1,vars)
+            call parseSmall(output2,result2,2,vars)
+            call parseBig(output3,output3u,result3,3,vars,type3)
+            call app('LSTR '//output1//' '//output2//' '//output3)
+            if (type3==32) then
+                call app('INC R25 '//output2)
+                call app('LSTR '//output1//' R25 '//output3u)
+            end if
         end if
     end subroutine
 
     subroutine cpy(arg1,arg2,arg3,vars)
-        type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: arg1, arg2, arg3
+        type(variable), allocatable, intent(in) :: vars(:)
+        character(len=:), allocatable, intent(in) :: arg1, arg2, arg3
         character(len=:), allocatable :: result1, result2, result3
         integer type1, type2, type3
         if (.not.memdec) then
@@ -1341,8 +1389,8 @@ module emit
     end subroutine
 
     subroutine lod(arg1,arg2,vars)
-        type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: arg1, arg2
+        type(variable), allocatable, intent(in) :: vars(:)
+        character(len=:), allocatable, intent(in) :: arg1, arg2
         character(len=:), allocatable :: result1, result2, output2
         integer type1, type2
         if (.not.memdec) then
@@ -1381,8 +1429,8 @@ module emit
     end subroutine
 
     subroutine out(arg1,arg2,arg3,arg4,vars)
-        type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: arg1, arg2, arg3, arg4
+        type(variable), allocatable, intent(in) :: vars(:)
+        character(len=:), allocatable, intent(in) :: arg1, arg2, arg3, arg4
         character(len=:), allocatable :: result1, result2, output2, output2u
         character(len=:), allocatable :: result3, result4, output3, output4
         integer type1, type2
@@ -1455,8 +1503,8 @@ module emit
     end subroutine
 
     subroutine in(arg1,arg2,arg3,arg4,vars)
-        type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: arg1, arg2, arg3, arg4
+        type(variable), allocatable, intent(in) :: vars(:)
+        character(len=:), allocatable, intent(in) :: arg1, arg2, arg3, arg4
         character(len=:), allocatable :: result1, result2, result3, result4
         character(len=:), allocatable :: output1, output3, output4
         integer type1, type2
@@ -1523,8 +1571,10 @@ module emit
     end subroutine
 
     subroutine data(inst,line,vars)
-        type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: line, inst, result1, arg
+        type(variable), allocatable, intent(in) :: vars(:)
+        character(len=:), allocatable, intent(in) :: line
+        character(len=:), allocatable, intent(inout) :: inst
+        character(len=:), allocatable :: result1, arg
         integer typedw, type1, temp, i, j
         logical skip
         inst = inst(2:)
@@ -1566,17 +1616,17 @@ module emit
     end subroutine
 
     subroutine c_parseDws(count,dwlist,pass)
-        implicit none
-        logical dwlabel
         integer, intent(out) :: count
-        character(len=:), allocatable :: dwmemsze, line, prevLine, temp, temp2, dwlist
+        character(len=:), allocatable, intent(out) :: dwlist
+        integer, intent(in) :: pass
+
+        character(len=:), allocatable :: dwmemsze, line, prevLine, temp, temp2
         logical comment, skip
         integer i,j,unused
         type(DW) thing
         type(variable), allocatable :: vars(:)
         integer :: size, type, memszet
-        integer, intent(in) :: pass
-        logical :: done
+        logical :: done, dwlabel
         if (pass==1) then
             allocate(dws(0),vars(0))
         end if

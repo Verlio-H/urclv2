@@ -101,9 +101,9 @@ module compilervars
     logical :: incprint32 = .false.
     logical :: incdiv32 = .false.
     logical :: incopengl = .false.
-    character(len=:), allocatable :: compiled
     integer :: currframe = 1
     integer :: id
+    character(len=:), allocatable :: compiled
 
     type(string), allocatable :: args(:)
     type(string), allocatable :: parsed(:)
@@ -229,7 +229,7 @@ program compiler
 contains
     recursive subroutine compile(input,initialvars)
         logical :: fromstr
-        type(string), allocatable, optional :: input(:)
+        type(string), allocatable, intent(inout), optional :: input(:)
         type(variable), allocatable, intent(in), optional :: initialvars(:)
 
         character(len=:), allocatable :: line, tmpstr, dwlist
@@ -243,14 +243,15 @@ contains
         else
             allocate(vars(0))
         end if
-        
-        comment = .false.
+
+
         if (present(input)) then
             fromstr = .true.
         else
             fromstr = .false.
         end if
-
+        
+        comment = .false.
         compiled = ''
 
         if (.not.fromstr.and.arch(:1)=='C') then
@@ -299,6 +300,10 @@ contains
                 end select
             end if
             line = trim(adjustl(line))
+            if (transExists(tmpstr)) then
+                call insertTrans(line,tmpstr,vars)
+                cycle
+            end if
             if (line(:4)=='OUT%') then
                 tmpstr = line(4:index(line,' ')-1)
                 call out(tmpstr, getop(line,1), getop(line,2,.false.), getop(line,3,.false.), vars)
@@ -308,15 +313,11 @@ contains
                 call in(getop(line,1), tmpstr, getop(line,2,.false.), getop(line,3,.false.), vars)
                 goto 9
             end if
-            if (transExists(tmpstr)) then
-                call insertTrans(line,tmpstr,vars)
-                cycle
-            end if
             select case (tmpstr)
             case ('')
                 continue
             case ('@INST')
-                call inststart(getop(line,1))
+                call inststart(getop(line,1),comment)
             case ('@VAR')
                 call temp%create(strtype(getop(line,2)), getop(line,1))
                 vars = [vars, temp]
@@ -392,14 +393,17 @@ contains
         end do
     end subroutine
 
-    subroutine insertTrans(line,tmpstr,vars)
-        character(len=:), allocatable :: line
-        character(len=:), allocatable :: tmpstr
-        type(variable), allocatable :: vars(:)
-        type(trans) translation
+    subroutine insertTrans(line,name,vars)
+        character(len=:), allocatable, intent(in) :: line
+        character(len=:), allocatable, intent(in) :: name
+        type(variable), allocatable, intent(in) :: vars(:)
+
         character(len=:), allocatable :: result
+        type(trans) translation
+        type(string), allocatable :: results(:,:)
         integer :: type, j
-        translation = getTrans(tmpstr,line,vars)
+
+        translation = getTrans(name,line,vars)
         if (.not.translation%compiled) then
             stack = [stack, frame(currentLoc=currentLoc, id=unique)]
             unique = unique + 1
@@ -434,15 +438,34 @@ contains
             currentLoc = stack(currframe)%currentLoc
         else
             if (arch(:1)=='C') call app('{')
+            if (arch(:1)=='C') then
+                allocate(results(size(translation%argnames),1))
+            else
+                allocate(results(size(translation%argnames),2))
+            end if
 
+            do i=1,size(translation%argnames)
+                result=parseArg(getop(line,i),type,vars)
+                if (arch=='IRI') then
+                    if (type==32) then
+                        call parseBig(results(i,1)%value,results(i,2)%value,result,i,vars,type)
+                    else
+                        call parseSmall(results(i,1)%value,result,i,vars)
+                        results(i,2)%value=''
+                    end if
+                else
+                    results(i,1)%value=result(2:)
+                end if
+            end do
             do i=1,size(translation%code)
-                tmpstr = translation%code(i)%value
+                result = translation%code(i)%value
                 do j=1,size(translation%argnames)
-                    result = parseArg(getop(line,j),type,vars)
-                    result = result(2:)
-                    tmpstr = replace(tmpstr,translation%argnames(i)%value,result)
+                    if (arch=='IRI') then
+                        result = replace(result,translation%argnames(j)%value//'U',results(j,2)%value)
+                    end if
+                    result = replace(result,translation%argnames(j)%value,results(j,1)%value)
                 end do
-                call app(trim(tmpstr))
+                call app(trim(result))
             end do
             if (arch(:1)=='C') call app('}')
         end if

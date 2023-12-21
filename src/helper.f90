@@ -17,7 +17,7 @@ module helper
         close(3)
     end function
 
-    function itoa(int)
+    pure function itoa(int)
         integer, intent(in) :: int
         character(len=:), allocatable :: itoa
         itoa = repeat(' ',12)
@@ -26,7 +26,7 @@ module helper
     end function
 
     subroutine app(str)
-        character(len=*) :: str
+        character(len=*), intent(in) :: str
         compiled = compiled//achar(10)//str
     end subroutine
 
@@ -43,9 +43,10 @@ module helper
         end if
     end subroutine
 
-    function getline(end,unit) result(line)
+    function getline(end,unit,debug) result(line)
         logical, intent(out), optional :: end
         integer, intent(in), optional :: unit
+        integer, intent(in), optional :: debug
         integer :: unitActual
         character(len=:), allocatable :: line
         character(len=256) :: readline
@@ -61,12 +62,16 @@ module helper
     999 if (present(end)) then
             end = .true.
         else
+            if (present(debug)) then
+                print'(A)','from line '//itoa(debug)
+            end if
             call throw('unexpected EOF')
         end if
     end
 
-    function replace(source,str1,str2)
-        character(len=:), allocatable, intent(in) :: source, str1, str2
+    pure function replace(source,str1,str2)
+        character(len=:), allocatable, intent(in) :: source
+        character(len=*), intent(in) :: str1, str2
         character(len=:), allocatable :: replace
         integer :: i
         replace = ''
@@ -82,11 +87,10 @@ module helper
         end do
     end function
 
-    subroutine fixstr(line, comment)
-        implicit none
-        character(len=:), allocatable :: line
-        integer tmp,i
+    pure subroutine fixstr(line, comment)
+        character(len=:), allocatable, intent(inout) :: line
         logical, intent(inout) :: comment
+        integer tmp,i
         line = trim(adjustl(line))
         tmp = 0
         if (comment.and.index(line,'*/')==0) then
@@ -129,10 +133,11 @@ module helper
         comment = .false.
     end subroutine
 
-    subroutine updatecom(line, comment)
-        character(len=:), allocatable :: line
-        logical comment, skip
-        integer i
+    pure subroutine updatecom(line, comment)
+        character(len=:), allocatable, intent(in) :: line
+        logical, intent(out) :: comment
+        logical :: skip
+        integer :: i
         skip = .false.
         do i=1,len(line)-1
             if (skip) then
@@ -151,26 +156,15 @@ module helper
     end subroutine
 
     function getop(line, num, error)
-        character(len=:), allocatable :: line, getop, tmp
-        integer num, i, j, group, start
+        character(len=:), allocatable, intent(in) :: line
+        integer, intent(in) :: num
+        logical, intent(in), optional :: error
+        character(len=:), allocatable :: getop, tmp
+        integer i, j, group, start
         logical istr, skip
-        logical, optional :: error
-        !logical, target, intent(inout) :: com
-        !logical, target :: com2
         character tmpc
-        !logical, optional :: updatearg
-        !logical, pointer :: comment
-        logical :: comment = .false.
-        !com2 = com
-        !if (present(updatearg)) then
-        !    if (updatearg) then
-        !        comment => com
-        !    else
-        !        comment => com2
-        !    end if
-        !else
-        !    comment => com2
-        !end if
+        logical :: comment
+        comment = .false.
         tmp = line
         j = 0
         istr = .false.
@@ -229,7 +223,7 @@ module helper
 
             end if
         end do
-        if (j==num) then
+        if (.not.comment.and.j==num) then
             getop = trim(adjustl(tmp(start:)))
         else
             getop = ' '

@@ -10,23 +10,23 @@ module var
         procedure :: create => var_create
         procedure :: get => var_get
         procedure :: set => var_set
-        procedure :: remove => var_remove
         procedure :: print => var_print
     end type
  contains
     integer function getvar_index(vars, name)
-        type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: name
+        type(variable), allocatable, intent(in) :: vars(:)
+        character(len=:), allocatable, intent(in) :: name
         do getvar_index=1,size(vars)
             if (vars(getvar_index)%name == name) return
         end do
+        call throw('undeclared variable "'//name//'"',.false.)
         getvar_index = 0
     end function
 
     function getvar(vars, name)
         type(variable) getvar
-        type(variable), allocatable :: vars(:)
-        character(len=:), allocatable :: name
+        type(variable), allocatable, intent(in) :: vars(:)
+        character(len=:), allocatable, intent(in) :: name
         integer temp
         temp = getvar_index(vars, name)
         if (temp/=0) then
@@ -34,15 +34,15 @@ module var
         end if
     end function
 
-    subroutine var_print(this)
-        class(variable) this
+    impure elemental subroutine var_print(this)
+        class(variable), intent(in) :: this
         print'(A)', this%name
         print'(I0)', this%location
         print'(I0)', this%type
     end subroutine
 
     integer function evalConst(name)
-        character(len=:), allocatable :: name
+        character(len=:), allocatable, intent(in) :: name
         integer :: i
         if (name(:1)=='@') then
             do i = 1, size(defines)
@@ -68,7 +68,7 @@ module var
     end function
 
     function evalDefine(name)
-        character(len=*) :: name
+        character(len=*), intent(in) :: name
         character(len=:), allocatable :: evalDefine
         integer :: i
         if (name(:1)/='@') call throw('internal error, expected defined constant')
@@ -155,8 +155,8 @@ module var
     end function
 
     function signed_c_type(type)
-        character(len=:), allocatable :: signed_c_type
         integer, intent(in) :: type
+        character(len=:), allocatable :: signed_c_type
         select case (type)
         case (1)
             signed_c_type = 'void*'
@@ -181,7 +181,7 @@ module var
     end function
 
     subroutine var_create(this, type, name)
-        class(variable) this
+        class(variable), intent(out) :: this
         integer, intent(in) :: type
         character(len=*), intent(in) :: name
         if (arch(:1) == 'C') then
@@ -202,8 +202,8 @@ module var
     end subroutine
 
     integer function var_get(this,arg)
-        class(variable) this
-        integer, optional :: arg
+        class(variable), intent(in) :: this
+        integer, intent(in), optional :: arg
         if (.not.present(arg).and.arch=='IRI') call throw('internal error: arg required for var_get on Iris arch')
         if (arch=='IRI') then
             if (this%location<18.or.this%location==18.and.this%type/=32) then
@@ -248,11 +248,10 @@ module var
     end function
 
     subroutine var_set(this, src, upper)
-        class(variable) this
-        character(len=*) :: src
-        logical, optional :: upper
+        class(variable), intent(in) :: this
+        character(len=*), intent(in) :: src
+        logical, intent(in), optional :: upper
         integer :: upperActual
-        character(len=11) :: strint
         upperActual = 0
         if (present(upper)) then
             if (upper) upperActual = 1
@@ -261,34 +260,22 @@ module var
             call app(this%name//'='//src//';')
         else if (arch=='IRI') then
             if (this%location+upperActual<=18) then
-                write(strint,'(I0)') this%location+upperActual
                 if (index(src,' ')/=1) then
-                    call app(src(:index(src,' '))//'R'//trim(strint)//src(index(src,' '):))
+                    call app(src(:index(src,' '))//'R'//itoa(this%location+upperActual)//src(index(src,' '):))
                 else
-                    call app('MOV R'//trim(strint)//src)
+                    call app('MOV R'//itoa(this%location+upperActual)//src)
                 end if
             else
-                write(strint,'(I0)') this%location+upperActual-19
                 if (index(src,' ')/=1) then
                     call app(src(:index(src,' '))//'R25'//src(index(src,' '):))
-                    call app('STR M'//trim(strint)//' R25')
+                    call app('STR M'//trim(itoa(this%location+upperActual-19))//' R25')
                 else
-                    call app('STR M'//trim(strint)//src)
+                    call app('STR M'//trim(itoa(this%location+upperActual-19))//' '//src)
                 end if
             end if
         else
             call throw('var set not implemented for this target')
         end if
 
-    end subroutine
-
-    subroutine var_remove(this)
-        class(variable) this
-        if (arch(:1) == 'C') then
-            this%name=this%name !scuffed way to silence warning
-            continue
-        else
-            call throw('var remove not implemented for this target')
-        end if
     end subroutine
 end module
