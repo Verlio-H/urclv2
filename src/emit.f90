@@ -759,11 +759,21 @@ module emit
                         call app('HPOP R8')
                         call app('HPOP R7')
                         if (inst=='DIV'.and.itemp/=3) then
-                            call vars(getvar_index(vars,result1))%set(' R3')
-                            call vars(getvar_index(vars,result1))%set(' R4',.true.)
+                            if (itemp==4) then
+                                call vars(getvar_index(vars,result1))%set(' R4',.true.)
+                                call vars(getvar_index(vars,result1))%set(' R3')
+                            else
+                                call vars(getvar_index(vars,result1))%set(' R3')
+                                call vars(getvar_index(vars,result1))%set(' R4',.true.)
+                            end if
                         else if (itemp/=5) then
-                            call vars(getvar_index(vars,result1))%set(' R5')
-                            call vars(getvar_index(vars,result1))%set(' R6',.true.)
+                            if (itemp==6) then
+                                call vars(getvar_index(vars,result1))%set(' R6',.true.)
+                                call vars(getvar_index(vars,result1))%set(' R5')
+                            else
+                                call vars(getvar_index(vars,result1))%set(' R5')
+                                call vars(getvar_index(vars,result1))%set(' R6',.true.)
+                            end if
                         end if
                         if (itemp/=5.and.itemp/=6) then
                             call app('HPOP R6')
