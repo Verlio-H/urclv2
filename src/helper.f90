@@ -87,6 +87,31 @@ module helper
         end do
     end function
 
+    pure function replacemem(source,base)
+        character(len=:), allocatable, intent(in) :: source
+        integer, intent(in) :: base
+        character(len=:), allocatable :: replacemem
+        integer :: i, j, value
+        replacemem = ''
+        i = 1
+        do while (i<=len(source))
+            if (source(i:i+2)=='$$$') then
+                j = i+3
+                do while (source(j:j)>='0'.and.source(j:j)<='9') !might want to make sure not out of bounds
+                    j = j + 1
+                end do
+                read(source(i+3:j-1),*) value
+                replacemem = replacemem//'M'//itoa(value+base)
+                i = j
+            else
+                replacemem = replacemem//source(i:i)
+                i = i + 1
+            end if
+        end do
+
+                
+end function
+
     pure subroutine fixstr(line, comment)
         character(len=:), allocatable, intent(inout) :: line
         logical, intent(inout) :: comment
@@ -161,19 +186,29 @@ module helper
         logical, intent(in), optional :: error
         character(len=:), allocatable :: getop, tmp
         integer i, j, group, start
-        logical istr, skip
+        logical istr, skip, ilstr
         character tmpc
         logical :: comment
         comment = .false.
         tmp = line
         j = 0
         istr = .false.
+        ilstr = .false.
         group = 0
         skip = .false.
         start = 1
         do i=1, len(line)
             if (skip) then
                 skip = .false.
+                cycle
+            end if
+            if (ilstr.and.tmpc=='\') then
+                skip = .true.
+                cycle
+            else if(ilstr.and.line(i:i)/='"') then
+                cycle
+            else if (ilstr) then
+                ilstr = .false.
                 cycle
             end if
             if (line(i:i+1)=='*/') then
@@ -207,6 +242,8 @@ module helper
                 istr = .not.istr
             else if (istr.and.tmpc=='\') then
                 skip = .true.
+            else if (.not.istr.and.tmpc=='"') then
+                ilstr = .true.
             else if (.not.istr.and.group==0.and.(tmpc==' '.or.line(i:i+1)=='/*'.or.line(i:i+1)=='//')) then
                 if (start>i) then
                     cycle

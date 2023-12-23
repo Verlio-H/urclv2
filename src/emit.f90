@@ -1,178 +1,8 @@
 module emit
-    use var
+    use inst
     implicit none
 
    contains
-    recursive function parseArg(argInput, type, vars) result(parse)
-        character(len=:), allocatable, intent(in) :: argInput
-        integer, intent(out) :: type
-        type(variable), allocatable, intent(in) :: vars(:)
-        character(len=:), allocatable :: parse, tmpstr, tmpstr2, arg
-        type(variable) :: tmpvar
-        integer temp, i
-        arg = trim(argInput)
-        if (arg(:1)=='@') then
-            if (index(arg(2:),'+')==0) then
-                temp = 0
-            else
-                temp = index(arg(2:),'+')+1
-            end if
-            if (temp==0.and.index(arg(2:),'-')/=0.or.(temp>index(arg(2:),'-')+1).and.index(arg(2:),'-')/=0) &
-             temp = index(arg(2:),'-')+1
-            if (temp==0.or.temp>index(arg,'*').and.index(arg,'*')/=0) temp = index(arg,'*')
-            if (temp==0.or.temp>index(arg,'/').and.index(arg,'/')/=0) temp = index(arg,'/')
-            tmpstr = arg(:temp-1)
-            tmpstr2 = arg(temp+1:)
-            if (temp==0) then
-                if (tmpstr2(:1)=='@') then
-                    tmpstr2 = parseArg(evalDefine(tmpstr2),type,vars)
-                end if
-                parse = tmpstr2
-            else
-                select case (arg(temp:temp))
-                case ('+')
-                    temp = evalConst(tmpstr) + evalConst(tmpstr2)
-                case ('-')
-                    temp = evalConst(tmpstr) + evalConst(tmpstr2)
-                case ('*')
-                    temp = evalConst(tmpstr) * evalConst(tmpstr2)
-                case ('/')
-                    temp = evalConst(tmpstr) / evalConst(tmpstr2)
-                end select
-                parse = repeat(' ', 12)
-                if (temp>=0.and.temp<2**16) then
-                    if(temp<2**8) then
-                        type=8
-                    else
-                        type=16
-                    end if
-                end if
-                write(parse,'(I12)') temp
-                parse = 'I'//trim(adjustl(parse))
-            end if
-        else if (arg(:1)=='%') then !port
-            type = 4
-            parse = arg
-        else if (arg(:1)=='~') then !relative
-            type = 1
-            if (arch(:1)=='C') then
-                read (arg(2:), *) temp
-                allocate(character(len=12) :: parse)
-                write (parse, *) lnum2+temp
-                parse = 'I&&line'//itoa(id)//'_'//trim(adjustl(parse))
-            else if (arch=='IRIS') then
-                read (arg(2:), *) temp
-                allocate(character(len=12) :: parse)
-                write (parse, *) lnum2+temp
-                parse = 'I.line'//itoa(id)//'_'//trim(adjustl(parse))
-            end if
-        else if (index(arg,'.')==0.and.(arg(:1)=='-'.or.arg(:1)=='+'.or.(arg(:1)>='0'.and.arg(:1)<='9'))) then !int
-            !handle inline math
-            if (index(arg(2:),'+')==0) then
-                temp = 0
-            else
-                temp = index(arg(2:),'+')+1
-            end if
-            if (temp==0.and.index(arg(2:),'-')/=0.or.(temp>index(arg(2:),'-')+1).and.index(arg(2:),'-')/=0) &
-             temp = index(arg(2:),'-')+1
-            if (temp==0.or.temp>index(arg,'*').and.index(arg,'*')/=0) temp = index(arg,'*')
-            if (temp==0.or.temp>index(arg,'/').and.index(arg,'/')/=0) temp = index(arg,'/')
-            if (temp/=0) then
-
-                    tmpstr2 = arg(temp+1:)
-                    tmpstr = arg(:temp-1)
-                    select case (arg(temp:temp))
-                    case ('+')
-                        temp = evalConst(tmpstr) + evalConst(tmpstr2)
-                    case ('-')
-                        temp = evalConst(tmpstr) + evalConst(tmpstr2)
-                    case ('*')
-                        temp = evalConst(tmpstr) * evalConst(tmpstr2)
-                    case ('/')
-                        temp = evalConst(tmpstr) / evalConst(tmpstr2)
-                    end select
-                    type = 8
-                    if (temp >= 256 .or. temp < -256) type = 16
-                    if (temp >= 65536 .or. temp < -65536) type = 32
-                    parse = repeat(' ', 12)
-                    write(parse,'(I12)') temp
-                    parse = 'I'//trim(adjustl(parse))
-
-            else
-                type = 0
-                if (index(arg,'I')/=0) then
-                    read(arg(index(arg,'I')+1:),*) type
-                    arg = arg(:index(arg,'I')-1)
-                end if
-                if (arg(:2)/='0X') then
-                    read (arg, *) temp
-                else
-                    read (arg(3:),'(Z8)') temp
-                    arg(2:2) = 'x'
-                end if
-                if (type==0) then
-                    type = 8
-                    if (temp >= 256 .or. temp < -256) type = 16
-                    if (temp >= 65536 .or. temp < -65536) type = 32
-                end if
-                parse = 'I'//arg
-            end if
-        else if (arg(:1)=='''') then !char
-            type = 8
-            parse = 'I'//arg
-        else if (arg(:1)=='.') then !label
-            type = 1
-            if (arch(:1)=='C') then
-                do i=1,size(dws)
-                    if (dws(i)%label==arg) then !dw label
-                        allocate(character(len=12) :: parse)
-                        write (parse,*) dws(i)%address
-                        parse = 'I(Dws+'//trim(adjustl(parse))//')'
-                        return
-                    end if
-                end do
-                parse = 'I&&'//'urcl'//itoa(id)//'_'//arg(2:)
-            else
-                parse = 'I.label'//itoa(id)//'_'//arg(2:)
-            end if
-        else if (arg(:1)=='-'.or.arg(:1)=='+'.or.(arg(:1)>='0'.and.arg(:1)<='9')) then !real
-            if (arg(len(trim(arg)):len(trim(arg)))=='d') then !long real
-                type = 3
-                if (arch(:1)=='C') parse = 'I'//arg(:len(trim(arg))-1)
-            else
-                type = 2
-                parse = 'I'//arg
-            end if
-        else if (arg(:1)=='M'.and.arg(2:2)>='0'.and.arg(2:2)<='9') then !memory address
-            type = 1
-            if (arch(:1)=='C') then
-                parse = 'I((void*)mem+'//arg(2:)//'*sizeof('//c_type(memsze)//'))'
-            else
-                if (memsze/=32) then
-                    parse = 'I'//arg
-                else
-                    read(arg(2:),*) temp
-                    parse = 'IM'//itoa(temp*2)
-                end if
-            end if
-        else !variable or arg
-            do i=1,size(args)
-                if (arg==args(i)%value) then
-                    type = types(i)
-                    parse = parsed(i)%value
-                    return
-                end if
-            end do
-            if (getvar_index(vars, arg)/=0) then
-                tmpvar = getvar(vars,arg)
-                type = tmpvar%type
-                parse = 'V'//arg
-            else
-                call throw('unknown operand type '''//arg//''' (likely undeclared variable)')
-                
-            end if
-        end if
-    end function
 
     subroutine init()
         if (arch(:1)=='C') then
@@ -217,10 +47,7 @@ module emit
             &'int width, height, status;',&
             &'void* mtxptr;',&
             &'void* windowptr;'
-            if (incopengl) write(2,'(A)') '#include "include/c11threads.h"'
-            write(2,'(A)') 'int run() {',&
-            &'union tmp tmp1, tmp2, tmp3;',&
-            &'HEADER;'
+            if (incopengl.or.incthread) write(2,'(A)') '#include "include/c11threads.h"'
         else if (arch=='IRIS') then
             write(2,'(A)') 'BITS 16','MINREG 25'
         else
@@ -410,72 +237,9 @@ module emit
         end if
     end subroutine
 
-    subroutine parseSmall(result,input,arg,vars)
-        character(len=:), allocatable, intent(out) :: result
-        character(len=:), allocatable, intent(in) :: input
-        integer, intent(in) :: arg
+    subroutine standard3Op(op, arg1, arg2, arg3, vars)
         type(variable), allocatable, intent(in) :: vars(:)
-        integer :: index
-        if (input(:1)=='V') then
-            result = input(2:)
-            index = vars(getvar_index(vars,result))%get(arg)
-            result = repeat(' ', 11) ! This line can be removed in fortran 2023
-            write(result,'(I0)') index
-            result = 'R'//trim(adjustl(result))
-        else
-            result = input(2:)
-        end if
-    end subroutine
-
-    subroutine parseBig(result,resultu,input,arg,vars,type)
-        character(len=:), allocatable, intent(out) :: result, resultu
-        character(len=:), allocatable, intent(in) :: input
-        type(variable), allocatable, intent(in) :: vars(:)
-        integer, intent(in) :: arg, type
-        integer :: index, temp
-
-        if (input(:1)=='V') then
-            result = input(2:)
-            index = vars(getvar_index(vars,result))%get(arg)
-            result = repeat(' ', 11)
-            write(result,'(I0)') index
-            result = 'R'//trim(adjustl(result))
-            if (type==32) then
-                resultu = repeat(' ', 11)
-                write(resultu,'(I0)') index + 1
-                resultu = 'R'//trim(adjustl(resultu))
-            else
-                resultu = ''
-            end if
-        else
-            result = input(2:)
-            if (result(:1)/='M'.and.result(:1)/='.') then
-                if (result(:2)/='0x') then
-                    read(result,*) temp
-                else
-                    read(result(3:),'(Z8)') temp
-                end if
-                if (type==32.or.temp<0) then
-                    result = repeat(' ',11)
-                    write(result,'(I0)') iand(temp,2**16-1)
-                    resultu = repeat(' ',11)
-                    write(resultu,'(I0)') shiftr(temp,16)
-                    result = trim(adjustl(result))
-                    resultu = trim(adjustl(resultu))
-                else
-                    !result = input
-                    resultu = ''
-                end if
-            else
-                !result = input
-                resultu = ''
-            end if
-        end if
-    end subroutine
-
-    subroutine standard3Op(inst, arg1, arg2, arg3, vars)
-        type(variable), allocatable, intent(in) :: vars(:)
-        character(len=:), allocatable, intent(in) :: inst, arg1, arg2, arg3
+        character(len=:), allocatable, intent(in) :: op, arg1, arg2, arg3
         character(len=:), allocatable :: result1, result2, result3, stype2, stype3
         character(len=:), allocatable :: output1, output2, output3
         character(len=:), allocatable :: output1u, output2u, output3u
@@ -483,7 +247,7 @@ module emit
         result1 = parseArg(arg1, type1, vars)
         result2 = parseArg(arg2, type2, vars)
         result3 = parseArg(arg3, type3, vars)
-        select case (inst)
+        select case (op)
         case ('LLOD')
             if (type2/=1) then
                 call throw('arg2 of LLOD must be of type ADDR')
@@ -491,26 +255,26 @@ module emit
         case ('BGE','BRG','BLE','BRL','BRE','BNE','BRC','BNC','SBGE','SBRG','SBLE','SBRL','SBRC','SBNC','FBGE',&
              &'FBRG','FBLE','FBRL','FBRE','FBNE','LFBGE','LFBRG','LFBLE','LFBRL','LFBRE','LFBNE')
             if (type1/=1) then
-                call throw('arg1 of '//inst//' must be of type ADDR')
+                call throw('arg1 of '//op//' must be of type ADDR')
             end if
         case default
             if (result1(:1)/='V') then
-                call throw('arg1 of '//inst//' must be a variable')
+                call throw('arg1 of '//op//' must be a variable')
             end if
         end select
         if (arch=='IRIS') then
-            select case (inst)
+            select case (op)
             case ('BGE','BLE','BRG','BRL','BRE','BNE','BRC','BNC','SBRG','SBRL')
                 if (type2/=32.and.type3/=32) then
                     call parseSmall(output1,result1,1,vars)
                     call parseSmall(output2,result2,2,vars)
                     call parseSmall(output3,result3,3,vars)
-                    call app(inst//' '//output1//' '//output2//' '//output3)
+                    call app(op//' '//output1//' '//output2//' '//output3)
                 else
                     call parseSmall(output1,result1,1,vars)
                     call parseBig(output2,output2u,result2,2,vars,type2)
                     call parseBig(output3,output3u,result3,3,vars,type3)
-                    select case (inst)
+                    select case (op)
                     case ('BGE')
                         if (output2u/=''.and.output3u/='') then
                             call app('BRG '//output1//' '//output2u//' '//output3u)
@@ -642,11 +406,11 @@ module emit
                     call parseSmall(output2,result2,2,vars)
                     call parseSmall(output3,result3,3,vars)
                     result1 = result1(2:)
-                    select case (inst)
+                    select case (op)
                     case ('SBSR')
                         call vars(getvar_index(vars,result1))%set('BSS '//output2//' '//output3)
                     case default
-                        call vars(getvar_index(vars,result1))%set(inst//' '//output2//' '//output3)
+                        call vars(getvar_index(vars,result1))%set(op//' '//output2//' '//output3)
                     end select
                     if (type1==8) then
                         call parseSmall(output1,result1,1,vars)
@@ -657,7 +421,7 @@ module emit
                     call parseBig(output3,output3u,result3,3,vars,type3)
                     result1 = result1(2:)
 
-                    select case (inst)
+                    select case (op)
                     case ('ADD')
                         if (output2u/=''.and.output3u/='') then
                             call app('ADD R25 '//output2u//' '//output3u)
@@ -765,7 +529,7 @@ module emit
                         call app('HCAL .div32')
                         call app('HPOP R8')
                         call app('HPOP R7')
-                        if (inst=='DIV'.and.itemp/=3) then
+                        if (op=='DIV'.and.itemp/=3) then
                             if (itemp==4) then
                                 call vars(getvar_index(vars,result1))%set(' R4',.true.)
                                 call vars(getvar_index(vars,result1))%set(' R3')
@@ -836,14 +600,14 @@ module emit
                                 call app('BSR R20 '//output2//' '//output3)
                                 call app('BSL R25 R25 '//itoa(16-itemp))
                                 call vars(getvar_index(vars,result1))%set('ADD R20 R25')
-                                if (inst=='BSR') then
+                                if (op=='BSR') then
                                     call vars(getvar_index(vars,result1))%set('BSR '//output2u//' '//output3,.true.)
                                 else
                                     call vars(getvar_index(vars,result1))%set('BSS '//output2u//' '//output3,.true.)
                                 end if
                             else if (itemp==16) then
                                 call vars(getvar_index(vars,result1))%set(' '//output2u)
-                                if (inst=='BSR') then
+                                if (op=='BSR') then
                                     call vars(getvar_index(vars,result1))%set(' R0',.true.)
                                 else
                                     call parseBig(output1,output1u,result1,1,vars,type1)
@@ -851,7 +615,7 @@ module emit
                                 end if
                             else
                                 write(output3,'(I0)') itemp-16
-                                if (inst=='BSR') then
+                                if (op=='BSR') then
                                     call vars(getvar_index(vars,result1))%set('BSR '//output2u//' '//trim(output3))
                                     call vars(getvar_index(vars,result1))%set(' R0',.true.)
                                 else
@@ -893,9 +657,9 @@ module emit
                 call parseSmall(output2,result2,2,vars)
                 call parseSmall(output3,result3,3,vars)
                 result1 = result1(2:)
-                call vars(getvar_index(vars,result1))%set(inst//' '//output2//' '//output3)
+                call vars(getvar_index(vars,result1))%set(op//' '//output2//' '//output3)
             case default
-                call throw('unknown instruction '//inst//' for arch IRIS')
+                call throw('unknown instruction '//op//' for arch IRIS')
                 
             end select
         else if (arch(:1)=='C') then
@@ -907,7 +671,7 @@ module emit
 
             if (type2 >= 8 .and. type2 <= 32) type2 = 64
             if (type3 >= 8 .and. type3 <= 32) type3 = 64
-            select case (inst)
+            select case (op)
             case ('SDIV','SBSR','SBGE','SBRG','SBLE','SBRL','SBRC','SBNC')
                 if (type2==32) then
                     call app('tmp2.v'//trim(typestr(type2))//'=('//stype2//')'//result2//';')
@@ -920,7 +684,7 @@ module emit
                 call app('tmp2.v'//trim(typestr(type2))//'='//result2//';')
                 call app('tmp3.v'//trim(typestr(type3))//'='//result3//';')
             end select
-            select case (inst)
+            select case (op)
             case ('ADD')
                 call app('tmp1.v64=tmp2.v64+tmp3.v64;')
             case ('SUB')
@@ -1029,7 +793,7 @@ module emit
                 end if
                 call app('tmp1.v32=*('//c_type(type1)//'*)((long long)tmp2.vADDR+tmp3.v64);')
             end select
-            select case (inst)
+            select case (op)
             case ('BGE','BRG','BLE','BRL','BRE','BNE','BRC','BNC','SBGE','SBRG','SBLE','SBRL','SBRC','SBNC','FBGE','FBRG','FBLE',&
                  &'FBRL','FBRE','FBNE','LFBGE','LFBRG','LFBLE','LFBRL','LFBRE','LFBNE')
             case default
@@ -1039,36 +803,36 @@ module emit
         end if
     end subroutine
 
-    subroutine standard2Op(inst, arg1,arg2,vars)
+    subroutine standard2Op(op, arg1,arg2,vars)
         type(variable), allocatable, intent(in) :: vars(:)
-        character(len=:), allocatable, intent(in) :: arg1, arg2, inst
+        character(len=:), allocatable, intent(in) :: arg1, arg2, op
         character(len=:), allocatable :: result1, result2, stype2
         character(len=:), allocatable :: output1, output2, output2u
         integer type1, type2
         result1 = parseArg(arg1, type1, vars)
         result2 = parseArg(arg2, type2, vars)
-        select case (inst)
+        select case (op)
         case ('BRP','BRN','BRZ','BNZ','FBRP','FBRN','FBRZ','FBNZ','LFBRP','LFBRN','LFBRZ','LFBNZ')
             if (type1/=1) then
-                call throw('arg1 of '//inst//' must be of type ADDR')
+                call throw('arg1 of '//op//' must be of type ADDR')
                 
             end if
         case default
             if (result1(:1)/='V') then
-                call throw('arg1 of '//inst//' must be a variable')
+                call throw('arg1 of '//op//' must be a variable')
                 
             end if
         end select
         if (arch=='IRIS') then
-            select case (inst)
+            select case (op)
             case ('MOV','INC','LSH','NEG','NOT','ITOF','FTOI')
                 result1 = result1(2:)
                 if (type1/=32) then
                     call parseSmall(output2,result2,3,vars)
-                    call vars(getvar_index(vars, result1))%set(inst//' '//output2)
+                    call vars(getvar_index(vars, result1))%set(op//' '//output2)
                 else
                     call parseBig(output2,output2u,result2,3,vars,type2)
-                    select case (inst)
+                    select case (op)
                     case ('MOV')
                         call vars(getvar_index(vars, result1))%set(' '//output2)
                         if (output2u/='') then
@@ -1118,9 +882,9 @@ module emit
                         call vars(getvar_index(vars, result1))%set('NOT '//output2)
                         call vars(getvar_index(vars, result1))%set('NOT '//output2u,.true.)
                     case ('ITOF')
-                        call vars(getvar_index(vars, result1))%set(inst//' '//output2)
+                        call vars(getvar_index(vars, result1))%set(op//' '//output2)
                     case ('FTOI')
-                        call vars(getvar_index(vars, result1))%set(inst//' '//output2)
+                        call vars(getvar_index(vars, result1))%set(op//' '//output2)
                         call vars(getvar_index(vars, result1))%set(' R0',.true.)
                     end select
                 end if
@@ -1128,10 +892,10 @@ module emit
                 call parseSmall(output1,result1,2,vars)
                 if (type2/=32) then
                     call parseSmall(output2,result2,3,vars)
-                    call app(inst//' '//output1//' '//output2)
+                    call app(op//' '//output1//' '//output2)
                 else
                     call parseBig(output2,output2u,result2,3,vars,type2)
-                    select case (inst)
+                    select case (op)
                     case ('BRP')
                         call app('BRP '//output1//' '//output2u)
                     case ('BNZ')
@@ -1143,7 +907,7 @@ module emit
                     end select
                 end if
             case default
-                call throw('unknown instruction '//inst//' for arch IRIS')
+                call throw('unknown instruction '//op//' for arch IRIS')
                 
             end select
         else if (arch(:1)=='C') then
@@ -1151,14 +915,14 @@ module emit
             result2 = result2(2:)
             stype2 = signed_c_type(type2)
             if (type2 >= 8 .and. type2 <= 32) type2 = 32
-            select case(inst)
+            select case(op)
             case ('SMOV','SRSH','BRP','BRN')
                 if (type2 == 32) call app('tmp2.v'//trim(typestr(type2))//'=('//stype2//')'//result2//';')
                 if (type2 /= 32) call app('tmp2.v'//trim(typestr(type2))//'='//result2//';')
             case default
                 call app('tmp2.v'//trim(typestr(type2))//'='//result2//';')
             end select
-            select case(inst)
+            select case(op)
             case ('MOV','SMOV')
                 call app('tmp1.v32=tmp2.v32;')
             case ('ABS')
@@ -1219,7 +983,7 @@ module emit
                 call app('tmp1.vREAL=(float)tmp2.vLREAL;')
             end select
             result2 = 'tmp1.v'//trim(typestr(type1))
-            select case (inst)
+            select case (op)
             case ('BRP','BRN','BRZ','BNZ','FBRP','FBRN','FBRZ','FBNZ','LFBRP','LFBRN','LFBRZ','LFBNZ')
             case default
                 call vars(getvar_index(vars, result1))%set(result2)
@@ -1227,17 +991,17 @@ module emit
         end if
     end subroutine
 
-    subroutine standard1Op(inst,arg1,vars)
+    subroutine standard1Op(op,arg1,vars)
         type(variable), allocatable, intent(in) :: vars(:)
-        character(len=:), allocatable, intent(in) :: arg1, inst
+        character(len=:), allocatable, intent(in) :: arg1, op
         character(len=:), allocatable :: result1, output1
         integer type1
         integer tmp
         result1 = parseArg(arg1, type1, vars)
-        select case (inst)
+        select case (op)
         case ('CAL')
             if (type1/=1) then
-                call throw('arg1 of '//inst//' must be of type ADDR')
+                call throw('arg1 of '//op//' must be of type ADDR')
                 
             end if
             if (.not.cstackdec) then
@@ -1246,7 +1010,7 @@ module emit
             end if
         case ('JMP')
             if (type1/=1) then
-                call throw('arg1 of '//inst//' must be of type ADDR')
+                call throw('arg1 of '//op//' must be of type ADDR')
                 
             end if
         case ('PSH')
@@ -1266,7 +1030,7 @@ module emit
         end select
         if (arch(:1)=='C') then
             result1 = result1(2:)
-            select case (inst)
+            select case (op)
             case ('JMP')
                 call app('goto *('//result1//');')
             case ('CAL')
@@ -1285,7 +1049,7 @@ module emit
                 call app(result1//'=*('//c_type(tmp)//'*)sp;')
             end select
         else if (arch=='IRIS') then
-            select case (inst)
+            select case (op)
             case ('CAL')
                 call parseSmall(output1,result1,2,vars)
                 call app('HCAL '//output1)
@@ -1293,7 +1057,7 @@ module emit
                 call parseSmall(output1,result1,2,vars)
                 call app('JMP '//output1)
             case default
-                call throw('unknown instruction '//inst//' for arch IRIS')
+                call throw('unknown instruction '//op//' for arch IRIS')
                 
             end select
         end if
@@ -1601,18 +1365,18 @@ module emit
         end if
     end subroutine
 
-    subroutine data(inst,line,vars)
+    subroutine data(op,line,vars)
         type(variable), allocatable, intent(in) :: vars(:)
         character(len=:), allocatable, intent(in) :: line
-        character(len=:), allocatable, intent(inout) :: inst
+        character(len=:), allocatable, intent(inout) :: op
         character(len=:), allocatable :: result1, arg
         integer typedw, type1, temp, i, j
         logical skip
-        inst = inst(2:)
-        if (inst=='W') then
+        op = op(2:)
+        if (op=='W') then
             typedw = memsze
         else
-            typedw = strtype(inst)
+            typedw = strtype(op)
         end if
         i = 1
         arg = getop(line,i,.false.)
@@ -1675,7 +1439,7 @@ module emit
             memszet = strtype(getop(line,1))
             dwmemsze = c_type(memszet)
             if (pass==2) then
-                call app(dwmemsze//'* Dws;')
+                write(2,'(A)') dwmemsze//'* Dws;'
             end if
         else if (pass==1) then
             if (line(:1)=='.') then
@@ -1721,15 +1485,19 @@ module emit
                         if (skip) then
                             skip = .false.
                             cycle
+                        else if (temp(i:i)=='"') then
+                            exit
                         else if (temp(i:i)=='\') then
                             temp2 = '            '
                             write (temp2, '(I0)') count
-                            dwlist = dwlist//'*('//c_type(type)//'*)(Dws+'//trim(temp2)//') = '''//temp(i:i+1)//''';'//achar(10)
+                            dwlist = dwlist//'*(('//c_type(type)//'*)Dws'//itoa(id)//&
+                             '+'//trim(temp2)//') = '''//temp(i:i+1)//''';'//achar(10)
                             skip = .true.
                         else
                             temp2 = '            '
                             write (temp2, '(I0)') count
-                            dwlist = dwlist// '*('//c_type(type)//'*)(Dws+'//trim(temp2)//') = '''//temp(i:i)//''';'//achar(10)
+                            dwlist = dwlist// '*(('//c_type(type)//'*)Dws'//itoa(id)//&
+                             '+'//trim(temp2)//') = '''//temp(i:i)//''';'//achar(10)
                         end if
                         count = count + size
                     end do
@@ -1738,7 +1506,8 @@ module emit
                     temp = parseArg(temp,unused,vars)
                     temp2 = '            '
                     write (temp2, '(I0)') count
-                    dwlist = dwlist//'*('//c_type(type)//'*)(Dws+'//trim(temp2)//') = '//temp(2:)//';'//achar(10)
+                    dwlist = dwlist//'*(('//c_type(type)//'*)Dws'//itoa(id)//&
+                     '+'//trim(temp2)//') = '//temp(2:)//';'//achar(10)
                 end if
                 j = j + 1
                 count = count + size

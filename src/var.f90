@@ -4,8 +4,9 @@ module var
 
     type variable
         character(len=:), allocatable :: name
-        integer :: location = 0
+        integer :: location = 0 ! not used in c
         integer(kind=1) :: type = 0
+        logical :: ptr = .false. ! only used in c
      contains
         procedure :: create => var_create
         procedure :: get => var_get
@@ -82,7 +83,7 @@ module var
     end function
 
     function strtype(input)
-        character(len=:), allocatable, intent(in) :: input
+        character(len=*), intent(in) :: input
         integer strtype
         select case (trim(adjustl(input)))
         case ('32')
@@ -196,6 +197,7 @@ module var
             this%location = currentLoc
             currentLoc = currentLoc + 1
             if (type==32) currentLoc = currentLoc + 1
+            maximumLoc = max(maximumLoc,currentLoc)
             return
         end if
         call throw('var creation not implemented for this target')

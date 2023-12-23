@@ -107,21 +107,26 @@ module compilervars
     logical :: incprint32 = .false.
     logical :: incdiv32 = .false.
     logical :: incopengl = .false.
+    logical :: incthread = .false.
 
+    integer :: maximumLoc = 18
+    logical :: inCalledTrans = .false.
+    
     integer :: currframe = 1
     integer :: currentLoc = 1
     integer :: id
     character(len=:), allocatable :: compiled
+    character(len=:), allocatable :: compiled2
 
     type(string), allocatable :: args(:)
     type(string), allocatable :: parsed(:)
     integer, allocatable :: types(:)
 
-    
+    character(len=:), allocatable :: savedCompiled
 end
 
 program compiler
-    use inst
+    use emit
     implicit none
     ! general
     integer i
@@ -232,8 +237,22 @@ program compiler
     unique = unique + 1
     call compile()
     call init()
-    write(2,'(A)') compiled
-    call end()
+    call insertCalledTrans()
+    if (arch(:1)=='C') then
+        write(2,'(A)') compiled2
+        write(2,'(A)') 'int run() {',&
+        &'union tmp tmp1, tmp2, tmp3;',&
+        &'HEADER;'
+        write(2,'(A)') compiled
+        write(2,'(A)') ending
+        call end()
+    else if (arch=='IRIS') then
+        compiled = replacemem(compiled,max(maximumLoc-19,0))
+        compiled2 = replacemem(compiled2,max(maximumLoc-19,0))
+        write(2,'(A)') compiled
+        call end()
+        write(2,'(A)') compiled2
+    end if
 contains
     recursive subroutine compile(input,initialvars)
         logical :: fromstr
@@ -262,6 +281,8 @@ contains
         comment = .false.
         compiled = ''
 
+        ending = ''
+
         if (.not.fromstr.and.arch(:1)=='C') then
             call c_parseDws(dwcount, dwlist, 1)
             rewind 1
@@ -283,7 +304,6 @@ contains
         else
             line = getline(done)
             lnum = lnum + 1
-            if (mod(lnum,25000)==0) print*,lnum
         end if
         if (done) return
         call fixstr(line, comment)
@@ -309,7 +329,7 @@ contains
             end if
             line = trim(adjustl(line))
             if (transExists(tmpstr)) then
-                call insertTrans(line,tmpstr,vars)
+                call insertTrans(line,tmpstr,vars,.false.)
                 cycle
             end if
             if (line(:4)=='OUT%') then
@@ -319,6 +339,18 @@ contains
             else if (line(:3)=='IN%') then
                 tmpstr = line(3:index(line,' ')-1)
                 call in(getop(line,1), tmpstr, getop(line,2,.false.), getop(line,3,.false.), vars)
+                goto 9
+            else if (line(:5)=='ICAL%') then
+                tmpstr = line(6:)
+                call callinst(tmpstr,vars)
+                goto 9
+            else if (line(:5)=='CCAL%') then
+                tmpstr = line(6:)
+                if(arch(:1)=='C') then
+                    call callinst(tmpstr,vars,.true.)
+                else
+                    call callinst(tmpstr,vars)
+                end if
                 goto 9
             end if
             select case (tmpstr)
@@ -373,9 +405,18 @@ contains
                 call ret()
             case ('HLT')
                 if (arch(:1)=='C') then
-                    call app('return 0;')
+                    call app(ending)
+                    if (inCalledTrans) then
+                        call app('return;')
+                    else
+                        call app('return 0;')
+                    end if
                 else
-                    call app('HLT')
+                    if (inCalledTrans) then
+                        call app('HRET')
+                    else
+                        call app('HLT')
+                    end if
                 end if
             case ('LSTR')
                 call lstr(getop(line,1), getop(line,2), getop(line, 3), vars)
@@ -401,10 +442,12 @@ contains
         end do
     end subroutine
 
-    subroutine insertTrans(line,name,vars)
+    subroutine insertTrans(line,name,vars,called)
         character(len=:), allocatable, intent(in) :: line
         character(len=:), allocatable, intent(in) :: name
         type(variable), allocatable, intent(in) :: vars(:)
+        logical, intent(in) :: called
+
 
         character(len=:), allocatable :: result
         type(trans) translation
@@ -418,12 +461,16 @@ contains
             stack(currframe)%lnum2 = lnum2
             stack(currframe)%compiled = compiled
             stack(currframe)%currentLoc = currentLoc
+            stack(currframe)%ending = ending
             currframe = currframe + 1
             stack(currframe)%args = translation%argnames
             allocate(stack(currframe)%types(size(translation%types)))
             allocate(stack(currframe)%parsed(size(translation%types)))
             do i=1,size(translation%argnames)
                 stack(currframe)%parsed(i)%value=parseArg(getop(line,i),stack(currframe)%types(i),vars)
+                if (called.and.arch(:1)=='C'.and..not.translation%value(i)) then
+                    stack(currframe)%parsed(i)%value = 'V*'//stack(currframe)%parsed(i)%value(2:)
+                end if
             end do
             args = stack(currframe)%args
             parsed = stack(currframe)%parsed
@@ -432,7 +479,7 @@ contains
             lnum2 = 0
             call compile(translation%code,vars)
             if (arch(:1)=='C') then
-                compiled = stack(currframe-1)%compiled//achar(10)//'{'//compiled//achar(10)//'}'
+                compiled = stack(currframe-1)%compiled//achar(10)//'{'//compiled//achar(10)//ending//'}'
             else
                 compiled = stack(currframe-1)%compiled//compiled
             end if
@@ -443,6 +490,7 @@ contains
             parsed = stack(currframe)%parsed
             args = stack(currframe)%args
             id = stack(currframe)%id
+            ending = stack(currframe)%ending
             currentLoc = stack(currframe)%currentLoc
         else
             if (arch(:1)=='C') call app('{')
@@ -477,5 +525,94 @@ contains
             end do
             if (arch(:1)=='C') call app('}')
         end if
+    end subroutine
+
+
+    subroutine insertCalledTrans()
+        character(len=:), allocatable :: currLine, type
+        type(variable), allocatable :: vars(:)
+        type(variable) :: tmpvar
+        integer :: idx, idx2
+        savedCompiled = compiled
+        compiled = ''
+        compiled2 = ''
+        do idx=1,size(translations)
+            associate(this=>translations(idx))
+                if (this%included) then
+                    inCalledTrans = .true.
+                    currLine = this%name
+                    if (allocated(vars)) then
+                        deallocate(vars)
+                    end if
+                    allocate(vars(size(this%argnames)))
+
+                    if (arch=='IRIS') then
+                        compiled2 = compiled2//'.inst_'//this%name//achar(10)
+                    else if (arch(:1)=='C') then
+                        compiled2 = compiled2//'void inst_'//this%name//'('
+                    end if
+                    currentLoc = maximumLoc + 1
+                    do idx2=1,size(this%argnames)
+                        type = this%types(idx2)%value(2:)
+                        if (type=='*') call throw('called defined inst cannot have * as argument type')
+                        if (arch=='IRIS') then
+                            call tmpvar%create(strtype(type),this%argnames(idx2)%value)
+                            savedCompiled = replace(&
+                                savedCompiled,this%name//'$'//this%argnames(idx2)%value,'M'//itoa(tmpvar%location-19))
+                            if (strtype(type)==32) then
+                                savedCompiled = replace(&
+                                    savedCompiled,this%name//'$$'//this%argnames(idx2)%value,'M'//itoa(tmpvar%location-18))
+                            end if
+
+                        else
+                            tmpvar%name = this%argnames(idx2)%value
+                            if (this%value(idx2)) then
+                                tmpvar%ptr = .false.
+                            else
+                                tmpvar%ptr = .true.
+                            end if
+                            tmpvar%type = int(strtype(type),1)
+                        end if
+                        currLine = currLine//' '//tmpvar%name
+                        vars(idx2) = tmpvar
+                        if (arch(:1)=='C') then
+                            if (tmpvar%ptr) then
+                                compiled2 = compiled2//c_type(strtype(type))//'* '//this%argnames(idx2)%value
+                            else
+                                compiled2 = compiled2//c_type(strtype(type))//' '//this%argnames(idx2)%value
+                            end if
+                            if (idx2/=size(this%argnames)) compiled2 = compiled2//', '
+                        end if
+                    end do
+                    if (arch(:1)=='C') then
+                        compiled2 = compiled2//') {'//achar(10)//'union tmp tmp1, tmp2, tmp3;'//achar(10)
+                    end if
+                    call insertTrans(currLine,this%name,vars,.true.)
+
+                   compiled2 = compiled2//compiled//achar(10)
+                    if (arch(:1)=='C') then
+                        compiled2 = compiled2//'}'//achar(10)
+                    else if (arch=='IRIS') then
+                        compiled2 = compiled2//'HRET'//achar(10)
+                    end if
+                end if
+                if (arch(:1)=='C'.and.this%concurrentIncluded) then
+                    compiled2 = compiled2//'void cinst_'//this%name//'(void* args) {'//achar(10)
+                    compiled2 = compiled2//'struct arguments {'//achar(10)
+                    do idx2=1,size(this%argnames)
+                        compiled2 = compiled2//c_type(strtype(this%types(idx2)%value(2:)))
+                        if (.not.this%value(idx2)) compiled2 = compiled2//'*'
+                        compiled2 = compiled2//' arg'//itoa(idx2)//';'//achar(10)
+                    end do
+                    compiled2 = compiled2//'};'//achar(10)//'inst_'//this%name//'('
+                    do idx2=1,size(this%argnames)
+                        compiled2 = compiled2//'((struct arguments*)args)->arg'//itoa(idx2)//','
+                    end do
+                    compiled2(len(compiled2):) = ')'
+                    compiled2 = compiled2//';'//achar(10)//'}'//achar(10)
+                end if
+            end associate
+        end do
+        compiled = savedCompiled
     end subroutine
 end

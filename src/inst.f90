@@ -1,19 +1,21 @@
 module inst
-    use emit
+    use argparsing
     implicit none
     type Trans
         logical :: pure = .false.
         logical :: compiled = .false.
         logical :: included = .false.
+        logical :: concurrentIncluded = .false.
 
         character(len=:), allocatable :: name
         type(string), allocatable :: argnames(:)
         type(string), allocatable :: types(:)
         type(Variable), allocatable :: globals(:)
+        logical, allocatable :: value(:)
 
         type(string), allocatable :: code(:)
     end type
-    type(Trans), allocatable, private :: translations(:)
+    type(Trans), allocatable :: translations(:)
     character(len=:), allocatable, private :: instName
 
 ! handling nesting
@@ -22,17 +24,120 @@ module inst
         type(string), allocatable :: parsed(:)
         integer, allocatable :: types(:)
         character(len=:), allocatable :: compiled
+        character(len=:), allocatable :: ending
         integer :: currentLoc
         integer :: lnum2 = 0
         integer :: id
     end type
     type(frame), allocatable :: stack(:)
-
+    character(len=:), allocatable :: ending
 
 contains
-    
+
     subroutine instInit()
         allocate(translations(0))
+    end subroutine
+
+    subroutine callInst(line,vars,concurrentOptional)
+        character(len=:), allocatable, intent(in) :: line
+        type(variable), allocatable, intent(in) :: vars(:)
+        logical, intent(in), optional :: concurrentOptional
+        logical :: concurrent
+
+        type(Trans) :: translation
+
+        character(len=:), allocatable :: result
+        integer :: type, i
+        character(len=:), allocatable :: output, outputu 
+
+        if (present(concurrentOptional)) then
+            concurrent = concurrentOptional
+        else
+            concurrent = .false.
+        end if
+
+        if (.not.transExists(getop(line,0))) call throw('no valid translation found for instruction '//getop(line,0))
+        translation = getTrans(getop(line,0),line,vars)
+        i = getTrans_index(getop(line,0),line,vars)
+        translations(i)%included = .true.
+        if (arch(:1)=='C') then
+            if (concurrent) then
+                output = 'struct struct'//itoa(unique)//' args'//itoa(unique)//' = (struct struct'//itoa(unique)//'){'
+                call app('struct struct'//itoa(unique)//' {')
+            else
+                output = 'inst_'//getop(line,0)//'('
+            end if
+            do i=1,size(translation%argnames)
+                result = parseArg(getop(line,i),type,vars)
+                if (concurrent) then
+                    if (translation%value(i)) then
+                        call app(c_type(strtype(translation%types(i)%value(2:)))//' arg'//itoa(i)//';')
+                    else
+                        call app(c_type(strtype(translation%types(i)%value(2:)))//'* arg'//itoa(i)//';')
+                    end if
+                    if (i/=size(translation%argnames)) compiled = compiled//','
+                end if
+                if (result(:1)/='V'.and..not.translation%value(i)) then
+                    call throw('instruction calls must not include immediates except for pass by value arguments')
+                end if
+                if (result(:1)=='V') then
+                    result = result(2:)
+                    if (vars(getvar_index(vars, result))%ptr) then
+                        if (translation%value(i)) output = output//'*'
+                    else
+                        if (.not.translation%value(i)) output = output//'&'
+                    end if
+                    output = output//result
+                else
+                    result = result(2:)
+                    output = output//result
+                end if
+                if (i/=size(translation%argnames)) output = output//', '
+            end do
+            if (concurrent) then
+                call app('};')
+                call app(output//'};')
+                incthread = .true.
+                call app('thrd_t thread'//itoa(unique+1)//';')
+                call app(&
+                 'thrd_create(&thread'//itoa(unique+1)//',(thrd_start_t)cinst_'//getop(line,0)//',&args'//itoa(unique)//');')
+                ending = ending//'thrd_join(thread'//itoa(unique+1)//',NULL);'//achar(10)
+                unique = unique + 2
+                i = getTrans_index(getop(line,0),line,vars)
+                translations(i)%concurrentIncluded = .true.
+            else
+                call app(output//');')
+            end if
+        else
+            do i=1,size(translation%argnames)
+                result = parseArg(getop(line,i),type,vars)
+                if (result(:1)/='V'.and..not.translation%value(i)) then
+                    call throw('instruction calls must not include immediates except for pass by value arguments')
+                end if
+                call parseBig(output,outputu,result,1,vars,type)
+                call app('STR '//translation%name//'$'//translation%argnames(i)%value//' '//output)
+                if (translation%types(i)%value(2:)=='32') then
+                    if (outputu=='') outputu = 'R0'
+                    call app('STR '//translation%name//'$$'//translation%argnames(i)%value//' '//outputu)
+                end if
+            end do
+            call app('HCAL .inst_'//translation%name)
+            do i=1,size(translation%argnames)
+                result = parseArg(getop(line,i),type,vars)
+                result = result(2:)
+                if (.not.translation%value(i)) then
+                    call vars(getvar_index(vars,result))%set(' '//translation%name//'$'//translation%argnames(i)%value)
+                    if (type==32) then
+                        if (translation%types(i)%value(2:)=='32') then
+                            call vars(getvar_index(vars,result))%set(&
+                             ' '//translation%name//'$$'//translation%argnames(i)%value,.true.)
+                        else
+                            call vars(getvar_index(vars,result))%set(' R0',.true.)
+                        end if
+                    end if
+                end if
+            end do
+        end if
     end subroutine
 
     logical function transExists(name)
@@ -95,8 +200,10 @@ contains
             this%argnames = [this%argnames, string(arg)]
         end do
         allocate(this%types(size(this%argnames)))
-        do i=1,size(this%types)
+        allocate(this%value(size(this%argnames)))
+        do i=1,size(this%argnames)
             this%types(i)%value='**'
+            this%value(i)=.false.
         end do
         do
         line = getline()
@@ -122,6 +229,10 @@ contains
             do i=1,size(this%types)
                 arg = getop(line,i,.false.)
                 if (arg=='') call throw('not enough types provided')
+                if (index(arg,'_VAL')/=0) then
+                    this%value(i) = .true.
+                    arg = arg(:index(arg,'_VAL')-1)
+                end if
                 if ((arg(:1)/='V'.and.arg(:1)/='I'.and.arg(:1)/='*')) call throw('invalid type')
                 this%types(i)%value = arg
             end do
@@ -131,12 +242,12 @@ contains
             if (arch(:1)=='C') then
                 if (arg/='C') then
                     translations = translations(:size(translations)-1)
-                    line = getline(debug=133)
+                    line = getline()
                     lnum = lnum + 1
                     call fixstr(line,comment)
                     do while (getop(line,0,.false.)/='@ENDTRANS')
                         call updatecom(line,comment)
-                        line = getline(debug=136)
+                        line = getline()
                         lnum = lnum + 1
                         call fixstr(line,comment)
                         if (getop(line,0,.false.)=='@ENDINST') then
@@ -151,12 +262,12 @@ contains
             else if (arch=='IRIS') then
                 if (arg/='URCL'.and.arg/='IRIS') then
                     translations = translations(:size(translations)-1)
-                    line = getline(debug=144)
+                    line = getline()
                     lnum = lnum + 1
                     call fixstr(line,comment)
                     do while (getop(line,0,.false.)/='@ENDTRANS')
                         call updatecom(line,comment)
-                        line = getline(debug=148)
+                        line = getline()
                         lnum = lnum + 1
                         call fixstr(line,comment)
                         if (getop(line,0,.false.)=='@ENDINST') then
@@ -194,7 +305,7 @@ contains
     type(Trans) function getTrans(name,input,vars)
         character(len=:), intent(in), allocatable :: name
         character(len=:), intent(in), allocatable :: input
-        type(variable), allocatable :: vars(:)
+        type(variable), intent(in), allocatable :: vars(:)
         character(len=:), allocatable :: result
         integer :: type, i, ii
         big: do i=1,size(translations)
@@ -214,4 +325,29 @@ contains
         end do big
         call throw('no valid translation found')
     end function
+
+    integer function getTrans_index(name,input,vars)
+        character(len=:), intent(in), allocatable :: name
+        character(len=:), intent(in), allocatable :: input
+        type(variable), intent(in), allocatable :: vars(:)
+        character(len=:), allocatable :: result
+        integer :: type, i, ii
+        big: do i=1,size(translations)
+            ii = 1
+            if (translations(i)%name/=name) cycle big
+            do while (getop(input,ii,.false.)/='')
+                if (size(translations(i)%types)<ii) cycle big
+                result = parseArg(getop(input,ii),type,vars)
+                if (translations(i)%types(ii)%value(:1)/='*'.and.result(:1)/=translations(i)%types(ii)%value(:1)) cycle big
+                if (translations(i)%types(ii)%value(2:)/='*'.and.translations(i)%types(ii)%value(2:)/=typestr(type)) cycle big
+                ii = ii + 1
+            end do
+            if (size(translations(i)%types)>=ii) cycle big
+            ! valid translation
+            getTrans_index = i
+            return
+        end do big
+        call throw('no valid translation found')
+    end function
+
 end module
