@@ -1,1 +1,1 @@
-gfortran src/*.f90 -o compiler -Ofast -std=f2018 -Wall
+gfortran src/*.f90 -o compiler -Ofast -std=f2018 -Wall -Wno-maybe-uninitialized
