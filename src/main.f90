@@ -1,7 +1,7 @@
-! TODO: Implement specified integer type for C
 ! TODO: Optimize IRIS 32 bit SUB
 ! TODO: Implement constant folding
 ! TODO: IRIS Microoptimizations to:
+! TODO: Add in other compiler constants
 !  MLT by 1
 !  MLT by power of 2
 !  MLT by 0
@@ -97,7 +97,6 @@ module compilervars
 
     integer :: unique = 0
 
-    type(DW), allocatable :: dws(:)
     type(Defined), allocatable :: defines(:)
 
     logical :: memdec = .false.
@@ -236,8 +235,8 @@ program compiler
     id = unique
     unique = unique + 1
     call compile()
-    call init()
     call insertCalledTrans()
+    call init()
     if (arch(:1)=='C') then
         write(2,'(A)') compiled2
         write(2,'(A)') 'int run() {',&
@@ -260,6 +259,7 @@ contains
         type(variable), allocatable, intent(in), optional :: initialvars(:)
 
         character(len=:), allocatable :: line, tmpstr, dwlist
+        type(DW), allocatable :: dws(:)
         logical :: comment, done
         integer :: dwcount
         type(variable), allocatable :: vars(:)
@@ -282,13 +282,19 @@ contains
         compiled = ''
 
         ending = ''
-
+        dwlist = '' ! to shut up gfortran
         if (.not.fromstr.and.arch(:1)=='C') then
-            call c_parseDws(dwcount, dwlist, 1)
+            dws = c_parseDws(dwcount, dwlist, 1)
             rewind 1
-            call c_parseDws(dwcount, dwlist, 2)
+            dws = c_parseDws(dwcount, dwlist, 2, inputDws=dws)
             rewind 1
+        else if (arch(:1)=='C') then
+            dws = c_parseDws(dwcount, dwlist, 1, input)
+            dws = c_parseDws(dwcount, dwlist, 2, input, dws)
+            call app(c_type(memsze)//'* Dws'//itoa(id)//'=malloc('//itoa(dwcount)//'*'//itoa(typesize(memsze))//');')
+            call app(dwlist)
         end if
+
 
         do
         if (fromstr) then
@@ -329,27 +335,27 @@ contains
             end if
             line = trim(adjustl(line))
             if (transExists(tmpstr)) then
-                call insertTrans(line,tmpstr,vars,.false.)
+                call insertTrans(line,tmpstr,vars,dws,.false.)
                 cycle
             end if
             if (line(:4)=='OUT%') then
                 tmpstr = line(4:index(line,' ')-1)
-                call out(tmpstr, getop(line,1), getop(line,2,.false.), getop(line,3,.false.), vars)
+                call out(tmpstr, getop(line,1), getop(line,2,.false.), getop(line,3,.false.), vars,dws)
                 goto 9
             else if (line(:3)=='IN%') then
                 tmpstr = line(3:index(line,' ')-1)
-                call in(getop(line,1), tmpstr, getop(line,2,.false.), getop(line,3,.false.), vars)
+                call in(getop(line,1), tmpstr, getop(line,2,.false.), getop(line,3,.false.), vars,dws)
                 goto 9
             else if (line(:5)=='ICAL%') then
                 tmpstr = line(6:)
-                call callinst(tmpstr,vars)
+                call callinst(tmpstr,vars,dws)
                 goto 9
             else if (line(:5)=='CCAL%') then
                 tmpstr = line(6:)
                 if(arch(:1)=='C') then
-                    call callinst(tmpstr,vars,.true.)
+                    call callinst(tmpstr,vars,dws,.true.)
                 else
-                    call callinst(tmpstr,vars)
+                    call callinst(tmpstr,vars,dws)
                 end if
                 goto 9
             end if
@@ -364,16 +370,15 @@ contains
             case ('@MEMSZE')
                 memsze = strtype(getop(line,1))
                 if (arch(:1)=='C') then
-                    call app('Dws=malloc('//itoa(dwcount)//'*sizeof('//c_type(memsze)//'));')
+                    call app(c_type(memsze)//'* Dws'//itoa(id)//'=malloc('//itoa(dwcount)//'*'//itoa(typesize(memsze))//');')
                     call app('#define const_SIZEMEM sizeof('//c_type(memsze)//')'//achar(10)//dwlist)
                 end if
             case ('@MINMEM')
                 call minmem(getop(line,1))
             case ('@DEFINE')
-                call define(getop(line,1),getop(line,2),vars)
+                call define(getop(line,1),getop(line,2),vars,dws)
                 tmpstr = getop(line,1)
                 if (tmpstr(:1)/='@') call throw('name of constant must start with @')
-    
             case ('@MINSTACK')
                 call minstack(getop(line,1))
             case ('@MINCSTACK')
@@ -391,16 +396,16 @@ contains
                  &'LFADD','LFSUB','LFMLT','LFDIV','LFMOD','LFBGE','LFBRG','LFBLE','LFBRL','LFBRE','LFBNE','LFSETGE','LFSETG',&
                  &'LFSETLE','LFSETL','LFSETE','LFSETNE')
                  ! ABS, FABS, NEG, SRSH, MOV, INC, DEC, NOT, BRP, BRN, BRZ, BNZ, FBRZ, FBNZ, PSH, POP, CAL, RET, HLT
-                call standard3Op(tmpstr, getop(line,1), getop(line,2), getop(line,3), vars)
+                call standard3Op(tmpstr, getop(line,1), getop(line,2), getop(line,3), vars,dws)
             case ('MOV',& !general
                  &'ABS','NEG','LSH','RSH','SRSH','SMOV','INC','DEC','NOT','BRP','BRN','BRZ','BNZ',& !integer
                  &'FABS','FNEG','FBRP','FBRN','FBRZ','FBNZ',& !real
                  &'LFABS','LFNEG','LFBRP','LFBRN','LFBRZ','LFBNZ',& !long real
                  &'ITOF','FTOI','ITOLF','LFTOI','FTOLF','LFTOF') !conversion
-                call standard2Op(tmpstr, getop(line,1), getop(line,2), vars)
+                call standard2Op(tmpstr, getop(line,1), getop(line,2), vars,dws)
             case ('JMP','CAL',& !control flow
                  &'PSH','POP') !memory
-                call standard1Op(tmpstr, getop(line,1), vars)
+                call standard1Op(tmpstr, getop(line,1), vars,dws)
             case ('RET')
                 call ret()
             case ('HLT')
@@ -419,18 +424,18 @@ contains
                     end if
                 end if
             case ('LSTR')
-                call lstr(getop(line,1), getop(line,2), getop(line, 3), vars)
+                call lstr(getop(line,1), getop(line,2), getop(line, 3), vars, dws)
             case ('CPY') !CPY now takes an amount to copy (memcpy basically)
-                call lstr(getop(line,1), getop(line,2), getop(line, 3), vars)
+                call lstr(getop(line,1), getop(line,2), getop(line, 3), vars, dws)
             case ('STR')
-                call str(getop(line,1), getop(line,2), vars)
+                call str(getop(line,1), getop(line,2), vars, dws)
             case ('LOD')
-                call lod(getop(line,1), getop(line,2), vars)
+                call lod(getop(line,1), getop(line,2), vars, dws)
             case ('IMM')
-                call imm(getop(line,1), getop(line,2), vars)
+                call imm(getop(line,1), getop(line,2), vars, dws)
             case ('DW','D8','D16','D32','DADDR','DREAL','DLREAL')
                 if (arch=='IRIS') then
-                    call data(tmpstr,line,vars)
+                    call data(tmpstr,line,vars,dws)
                 else if (arch(:1)/='C') then
                     call throw('dw not implemented for this architecture')
                 end if
@@ -442,9 +447,10 @@ contains
         end do
     end subroutine
 
-    subroutine insertTrans(line,name,vars,called)
+    subroutine insertTrans(line,name,vars,dws,called)
         character(len=:), allocatable, intent(in) :: line
         character(len=:), allocatable, intent(in) :: name
+        type(DW), allocatable, intent(in) :: dws(:)
         type(variable), allocatable, intent(in) :: vars(:)
         logical, intent(in) :: called
 
@@ -454,7 +460,7 @@ contains
         type(string), allocatable :: results(:,:)
         integer :: type, j
 
-        translation = getTrans(name,line,vars)
+        translation = getTrans(name,line,vars,dws)
         if (.not.translation%compiled) then
             stack = [stack, frame(currentLoc=currentLoc, id=unique)]
             unique = unique + 1
@@ -467,7 +473,7 @@ contains
             allocate(stack(currframe)%types(size(translation%types)))
             allocate(stack(currframe)%parsed(size(translation%types)))
             do i=1,size(translation%argnames)
-                stack(currframe)%parsed(i)%value=parseArg(getop(line,i),stack(currframe)%types(i),vars)
+                stack(currframe)%parsed(i)%value=parseArg(getop(line,i),stack(currframe)%types(i),vars,dws)
                 if (called.and.arch(:1)=='C'.and..not.translation%value(i)) then
                     stack(currframe)%parsed(i)%value = 'V*'//stack(currframe)%parsed(i)%value(2:)
                 end if
@@ -501,7 +507,7 @@ contains
             end if
 
             do i=1,size(translation%argnames)
-                result=parseArg(getop(line,i),type,vars)
+                result=parseArg(getop(line,i),type,vars,dws)
                 if (arch=='IRIS') then
                     if (type==32) then
                         call parseBig(results(i,1)%value,results(i,2)%value,result,i,vars,type)
@@ -530,6 +536,7 @@ contains
 
     subroutine insertCalledTrans()
         character(len=:), allocatable :: currLine, type
+        type(DW), allocatable :: dws(:)
         type(variable), allocatable :: vars(:)
         type(variable) :: tmpvar
         integer :: idx, idx2
@@ -537,6 +544,12 @@ contains
         compiled = ''
         compiled2 = ''
         do idx=1,size(translations)
+            if (allocated(dws)) then
+                deallocate(dws)
+                allocate(dws(0))
+            else
+                allocate(dws(0))
+            end if
             associate(this=>translations(idx))
                 if (this%included) then
                     inCalledTrans = .true.
@@ -587,7 +600,7 @@ contains
                     if (arch(:1)=='C') then
                         compiled2 = compiled2//') {'//achar(10)//'union tmp tmp1, tmp2, tmp3;'//achar(10)
                     end if
-                    call insertTrans(currLine,this%name,vars,.true.)
+                    call insertTrans(currLine,this%name,vars,dws,.true.)
 
                    compiled2 = compiled2//compiled//achar(10)
                     if (arch(:1)=='C') then

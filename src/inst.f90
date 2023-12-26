@@ -38,9 +38,10 @@ contains
         allocate(translations(0))
     end subroutine
 
-    subroutine callInst(line,vars,concurrentOptional)
+    subroutine callInst(line,vars,dws,concurrentOptional)
         character(len=:), allocatable, intent(in) :: line
         type(variable), allocatable, intent(in) :: vars(:)
+        type(DW), allocatable, intent(in) :: dws(:)
         logical, intent(in), optional :: concurrentOptional
         logical :: concurrent
 
@@ -57,8 +58,8 @@ contains
         end if
 
         if (.not.transExists(getop(line,0))) call throw('no valid translation found for instruction '//getop(line,0))
-        translation = getTrans(getop(line,0),line,vars)
-        i = getTrans_index(getop(line,0),line,vars)
+        translation = getTrans(getop(line,0),line,vars,dws)
+        i = getTrans_index(getop(line,0),line,vars,dws)
         translations(i)%included = .true.
         if (arch(:1)=='C') then
             if (concurrent) then
@@ -68,7 +69,7 @@ contains
                 output = 'inst_'//getop(line,0)//'('
             end if
             do i=1,size(translation%argnames)
-                result = parseArg(getop(line,i),type,vars)
+                result = parseArg(getop(line,i),type,vars,dws)
                 if (concurrent) then
                     if (translation%value(i)) then
                         call app(c_type(strtype(translation%types(i)%value(2:)))//' arg'//itoa(i)//';')
@@ -98,19 +99,19 @@ contains
                 call app('};')
                 call app(output//'};')
                 incthread = .true.
-                call app('thrd_t thread'//itoa(unique+1)//';')
+                call app('thrd_t thread'//itoa(unique)//';')
                 call app(&
-                 'thrd_create(&thread'//itoa(unique+1)//',(thrd_start_t)cinst_'//getop(line,0)//',&args'//itoa(unique)//');')
-                ending = ending//'thrd_join(thread'//itoa(unique+1)//',NULL);'//achar(10)
-                unique = unique + 2
-                i = getTrans_index(getop(line,0),line,vars)
+                 'thrd_create(&thread'//itoa(unique)//',(thrd_start_t)cinst_'//getop(line,0)//',&args'//itoa(unique)//');')
+                ending = ending//'thrd_join(thread'//itoa(unique)//',NULL);'//achar(10)
+                unique = unique + 1
+                i = getTrans_index(getop(line,0),line,vars,dws)
                 translations(i)%concurrentIncluded = .true.
             else
                 call app(output//');')
             end if
         else
             do i=1,size(translation%argnames)
-                result = parseArg(getop(line,i),type,vars)
+                result = parseArg(getop(line,i),type,vars,dws)
                 if (result(:1)/='V'.and..not.translation%value(i)) then
                     call throw('instruction calls must not include immediates except for pass by value arguments')
                 end if
@@ -123,7 +124,7 @@ contains
             end do
             call app('HCAL .inst_'//translation%name)
             do i=1,size(translation%argnames)
-                result = parseArg(getop(line,i),type,vars)
+                result = parseArg(getop(line,i),type,vars,dws)
                 result = result(2:)
                 if (.not.translation%value(i)) then
                     call vars(getvar_index(vars,result))%set(' '//translation%name//'$'//translation%argnames(i)%value)
@@ -302,10 +303,11 @@ contains
         end associate
     end subroutine
 
-    type(Trans) function getTrans(name,input,vars)
+    type(Trans) function getTrans(name,input,vars,dws)
         character(len=:), intent(in), allocatable :: name
         character(len=:), intent(in), allocatable :: input
         type(variable), intent(in), allocatable :: vars(:)
+        type(DW), allocatable, intent(in) :: dws(:)
         character(len=:), allocatable :: result
         integer :: type, i, ii
         big: do i=1,size(translations)
@@ -313,7 +315,7 @@ contains
             if (translations(i)%name/=name) cycle big
             do while (getop(input,ii,.false.)/='')
                 if (size(translations(i)%types)<ii) cycle big
-                result = parseArg(getop(input,ii),type,vars)
+                result = parseArg(getop(input,ii),type,vars,dws)
                 if (translations(i)%types(ii)%value(:1)/='*'.and.result(:1)/=translations(i)%types(ii)%value(:1)) cycle big
                 if (translations(i)%types(ii)%value(2:)/='*'.and.translations(i)%types(ii)%value(2:)/=typestr(type)) cycle big
                 ii = ii + 1
@@ -326,10 +328,11 @@ contains
         call throw('no valid translation found')
     end function
 
-    integer function getTrans_index(name,input,vars)
+    integer function getTrans_index(name,input,vars,dws)
         character(len=:), intent(in), allocatable :: name
         character(len=:), intent(in), allocatable :: input
         type(variable), intent(in), allocatable :: vars(:)
+        type(DW), allocatable, intent(in) :: dws(:)
         character(len=:), allocatable :: result
         integer :: type, i, ii
         big: do i=1,size(translations)
@@ -337,7 +340,7 @@ contains
             if (translations(i)%name/=name) cycle big
             do while (getop(input,ii,.false.)/='')
                 if (size(translations(i)%types)<ii) cycle big
-                result = parseArg(getop(input,ii),type,vars)
+                result = parseArg(getop(input,ii),type,vars,dws)
                 if (translations(i)%types(ii)%value(:1)/='*'.and.result(:1)/=translations(i)%types(ii)%value(:1)) cycle big
                 if (translations(i)%types(ii)%value(2:)/='*'.and.translations(i)%types(ii)%value(2:)/=typestr(type)) cycle big
                 ii = ii + 1

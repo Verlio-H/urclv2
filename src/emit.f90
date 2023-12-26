@@ -131,7 +131,8 @@ module emit
         end if
     end subroutine
 
-    subroutine define(name, value, vars)
+    subroutine define(name, value, vars, dws)
+        type(DW), allocatable, intent(in) :: dws(:)
         character(len=:), allocatable, intent(in) :: name
         character(len=:), allocatable, intent(in) :: value
         type(variable), allocatable, intent(in) :: vars(:)
@@ -139,7 +140,7 @@ module emit
         character(len=:), allocatable :: result
         type(defined) :: tdefine
         integer :: type
-        result = parseArg(value, type, vars)
+        result = parseArg(value, type, vars, dws)
         tdefine%name = name
         tdefine%value = result(2:)
         tdefine%int = .false.
@@ -210,13 +211,14 @@ module emit
         end if
     end subroutine
 
-    subroutine imm(arg1,arg2,vars)
+    subroutine imm(arg1,arg2,vars, dws)
+        type(DW), allocatable, intent(in) :: dws(:)
         type(variable), allocatable, intent(in) :: vars(:)
         character(len=:), allocatable, intent(in) :: arg1, arg2
         character(len=:), allocatable :: result1, result2
         integer type1, type2, addr
-        result1 = parseArg(arg1, type1, vars)
-        result2 = parseArg(arg2, type2, vars) !only 2nd arg type is important
+        result1 = parseArg(arg1, type1, vars, dws)
+        result2 = parseArg(arg2, type2, vars, dws) !only 2nd arg type is important
         if (result1(:1)/='V') then
             call throw('arg1 of IMM must be a variable')
             
@@ -237,16 +239,17 @@ module emit
         end if
     end subroutine
 
-    subroutine standard3Op(op, arg1, arg2, arg3, vars)
+    subroutine standard3Op(op, arg1, arg2, arg3, vars, dws)
+        type(DW), allocatable, intent(in) :: dws(:)
         type(variable), allocatable, intent(in) :: vars(:)
         character(len=:), allocatable, intent(in) :: op, arg1, arg2, arg3
         character(len=:), allocatable :: result1, result2, result3, stype2, stype3
         character(len=:), allocatable :: output1, output2, output3
         character(len=:), allocatable :: output1u, output2u, output3u
         integer type1, type2, type3, itemp, itemp2, itemp3
-        result1 = parseArg(arg1, type1, vars)
-        result2 = parseArg(arg2, type2, vars)
-        result3 = parseArg(arg3, type3, vars)
+        result1 = parseArg(arg1, type1, vars, dws)
+        result2 = parseArg(arg2, type2, vars, dws)
+        result3 = parseArg(arg3, type3, vars, dws)
         select case (op)
         case ('LLOD')
             if (type2/=1) then
@@ -803,14 +806,15 @@ module emit
         end if
     end subroutine
 
-    subroutine standard2Op(op, arg1,arg2,vars)
+    subroutine standard2Op(op, arg1,arg2,vars,dws)
+        type(DW), allocatable, intent(in) :: dws(:)
         type(variable), allocatable, intent(in) :: vars(:)
         character(len=:), allocatable, intent(in) :: arg1, arg2, op
         character(len=:), allocatable :: result1, result2, stype2
         character(len=:), allocatable :: output1, output2, output2u
         integer type1, type2
-        result1 = parseArg(arg1, type1, vars)
-        result2 = parseArg(arg2, type2, vars)
+        result1 = parseArg(arg1, type1, vars, dws)
+        result2 = parseArg(arg2, type2, vars, dws)
         select case (op)
         case ('BRP','BRN','BRZ','BNZ','FBRP','FBRN','FBRZ','FBNZ','LFBRP','LFBRN','LFBRZ','LFBNZ')
             if (type1/=1) then
@@ -991,13 +995,14 @@ module emit
         end if
     end subroutine
 
-    subroutine standard1Op(op,arg1,vars)
+    subroutine standard1Op(op,arg1,vars,dws)
+        type(DW), allocatable, intent(in) :: dws(:)
         type(variable), allocatable, intent(in) :: vars(:)
         character(len=:), allocatable, intent(in) :: arg1, op
         character(len=:), allocatable :: result1, output1
         integer type1
         integer tmp
-        result1 = parseArg(arg1, type1, vars)
+        result1 = parseArg(arg1, type1, vars, dws)
         select case (op)
         case ('CAL')
             if (type1/=1) then
@@ -1063,7 +1068,8 @@ module emit
         end if
     end subroutine
 
-    subroutine str(arg1,arg2,vars)
+    subroutine str(arg1,arg2,vars,dws)
+        type(DW), allocatable, intent(in) :: dws(:)
         type(variable), allocatable, intent(in) :: vars(:)
         character(len=:), allocatable, intent(in) :: arg1, arg2
         character(len=:), allocatable :: result1, result2
@@ -1073,8 +1079,8 @@ module emit
             call throw('size of memory must be declared before use of STR')
             
         end if
-        result1 = parseArg(arg1, type1, vars)
-        result2 = parseArg(arg2, type2, vars)
+        result1 = parseArg(arg1, type1, vars, dws)
+        result2 = parseArg(arg2, type2, vars, dws)
         if (type1/=1) then
             call throw('arg1 of STR must be of size ADDR')
             
@@ -1106,7 +1112,8 @@ module emit
         end if
     end subroutine
 
-    subroutine lstr(arg1,arg2,arg3,vars)
+    subroutine lstr(arg1,arg2,arg3,vars,dws)
+        type(DW), allocatable, intent(in) :: dws(:)
         type(variable), allocatable, intent(in) :: vars(:)
         character(len=:), allocatable, intent(in) :: arg1, arg2, arg3
         character(len=:), allocatable :: result1, result2, result3
@@ -1115,9 +1122,9 @@ module emit
         if (.not.memdec) then
             call throw('size of memory must be declared before use of LSTR')
         end if
-        result1 = parseArg(arg1, type1, vars)
-        result2 = parseArg(arg2, type2, vars)
-        result3 = parseArg(arg3, type3, vars)
+        result1 = parseArg(arg1, type1, vars, dws)
+        result2 = parseArg(arg2, type2, vars, dws)
+        result3 = parseArg(arg3, type3, vars, dws)
         if (type1/=1) then
             call throw('arg1 of LSTR must be of type ADDR')
         end if
@@ -1149,7 +1156,8 @@ module emit
         end if
     end subroutine
 
-    subroutine cpy(arg1,arg2,arg3,vars)
+    subroutine cpy(arg1,arg2,arg3,vars,dws)
+        type(DW), allocatable, intent(in) :: dws(:)
         type(variable), allocatable, intent(in) :: vars(:)
         character(len=:), allocatable, intent(in) :: arg1, arg2, arg3
         character(len=:), allocatable :: result1, result2, result3
@@ -1158,9 +1166,9 @@ module emit
             call throw('size of memory must be declared before use of CPY')
             
         end if
-        result1 = parseArg(arg1, type1, vars)
-        result2 = parseArg(arg2, type2, vars)
-        result3 = parseArg(arg3, type3, vars)
+        result1 = parseArg(arg1, type1, vars, dws)
+        result2 = parseArg(arg2, type2, vars, dws)
+        result3 = parseArg(arg3, type3, vars, dws)
         if (type1/=1) then
             call throw('arg1 of CPY must be of type ADDR')
             
@@ -1183,7 +1191,8 @@ module emit
         end if
     end subroutine
 
-    subroutine lod(arg1,arg2,vars)
+    subroutine lod(arg1,arg2,vars,dws)
+        type(DW), allocatable, intent(in) :: dws(:)
         type(variable), allocatable, intent(in) :: vars(:)
         character(len=:), allocatable, intent(in) :: arg1, arg2
         character(len=:), allocatable :: result1, result2, output2
@@ -1192,8 +1201,8 @@ module emit
             call throw('size of memory must be declared before use of LOD')
             
         end if
-        result1 = parseArg(arg1, type1, vars)
-        result2 = parseArg(arg2, type2, vars)
+        result1 = parseArg(arg1, type1, vars, dws)
+        result2 = parseArg(arg2, type2, vars, dws)
         if (type2/=1) then
             call throw('arg2 of LOD must be of size ADDR')
             
@@ -1223,14 +1232,15 @@ module emit
         end if
     end subroutine
 
-    subroutine out(arg1,arg2,arg3,arg4,vars)
+    subroutine out(arg1,arg2,arg3,arg4,vars,dws)
+        type(DW), allocatable, intent(in) :: dws(:)
         type(variable), allocatable, intent(in) :: vars(:)
         character(len=:), allocatable, intent(in) :: arg1, arg2, arg3, arg4
         character(len=:), allocatable :: result1, result2, output2, output2u
         character(len=:), allocatable :: result3, result4, output3, output4
         integer type1, type2
-        result1 = parseArg(arg1, type1, vars)
-        result2 = parseArg(arg2, type2, vars)
+        result1 = parseArg(arg1, type1, vars, dws)
+        result2 = parseArg(arg2, type2, vars, dws)
         if (type1/=4) then
             call throw('arg1 of OUT must be a port')
             
@@ -1243,8 +1253,8 @@ module emit
             case ('%NUMB')
                 call app('printf("%d",'//result2//');')
             case ('%PIXEL')
-                result3 = parseArg(arg3, type1, vars)
-                result4 = parseArg(arg4, type1, vars)
+                result3 = parseArg(arg3, type1, vars, dws)
+                result4 = parseArg(arg4, type1, vars, dws)
                 result3 = result3(2:)
                 result4 = result4(2:)
                 call app('mtx_lock(mtxptr);')
@@ -1285,8 +1295,8 @@ module emit
                     end if
                 end if
             case ('%PIXEL')
-                result3 = parseArg(arg3, type1, vars)
-                result4 = parseArg(arg4, type1, vars)
+                result3 = parseArg(arg3, type1, vars, dws)
+                result4 = parseArg(arg4, type1, vars, dws)
                 call parseSmall(output2,result2,1,vars)
                 call parseSmall(output3,result3,2,vars)
                 call parseSmall(output4,result4,3,vars)
@@ -1297,14 +1307,15 @@ module emit
 
     end subroutine
 
-    subroutine in(arg1,arg2,arg3,arg4,vars)
+    subroutine in(arg1,arg2,arg3,arg4,vars,dws)
+        type(DW), allocatable, intent(in) :: dws(:)
         type(variable), allocatable, intent(in) :: vars(:)
         character(len=:), allocatable, intent(in) :: arg1, arg2, arg3, arg4
         character(len=:), allocatable :: result1, result2, result3, result4
         character(len=:), allocatable :: output1, output3, output4
         integer type1, type2
-        result1 = parseArg(arg1, type1, vars)
-        result2 = parseArg(arg2, type2, vars)
+        result1 = parseArg(arg1, type1, vars, dws)
+        result2 = parseArg(arg2, type2, vars, dws)
         if (type2/=4) then
             call throw('arg2 of IN must be a port')
             
@@ -1330,8 +1341,8 @@ module emit
                 result2 = 'tmp1.v'//trim(typestr(type1))
                 call vars(getvar_index(vars, result1))%set(result2)
             case ('%PIXEL')
-                result3 = parseArg(arg3, type1, vars)
-                result4 = parseArg(arg4, type1, vars)
+                result3 = parseArg(arg3, type1, vars, dws)
+                result4 = parseArg(arg4, type1, vars, dws)
                 result3 = result3(2:)
                 result4 = result4(2:)
                 call app('mtx_lock(mtxptr);')
@@ -1352,8 +1363,8 @@ module emit
             case ('%EXIT')
                 call vars(getvar_index(vars, result1))%set(' R0')
             case ('%PIXEL')
-                result3 = parseArg(arg3, type1, vars)
-                result4 = parseArg(arg4, type1, vars)
+                result3 = parseArg(arg3, type1, vars, dws)
+                result4 = parseArg(arg4, type1, vars, dws)
                 call parseSmall(output1,result1,1,vars)
                 call parseSmall(output3,result3,2,vars)
                 call parseSmall(output4,result4,3,vars)
@@ -1365,7 +1376,8 @@ module emit
         end if
     end subroutine
 
-    subroutine data(op,line,vars)
+    subroutine data(op,line,vars,dws)
+        type(DW), allocatable, intent(in) :: dws(:)
         type(variable), allocatable, intent(in) :: vars(:)
         character(len=:), allocatable, intent(in) :: line
         character(len=:), allocatable, intent(inout) :: op
@@ -1391,12 +1403,12 @@ module emit
                         call app('DW '''//arg(j:j+1)//'''')
                         skip = .true.
                     else
-                        call app('DW '''//arg(j:j)//'''')
+                        call app('DW '//itoa(iachar(arg(j:j))))
                     end if
                     if (typedw==32) call app('DW 0')
                 end do
             else
-                result1 = parseArg(arg, type1, vars)
+                result1 = parseArg(arg,type1,vars,dws)
                 if (typedw/=32) then
                     call app('DW '//result1(2:))
                 else
@@ -1410,20 +1422,22 @@ module emit
         end do
     end subroutine
 
-    subroutine c_parseDws(count,dwlist,pass)
+    function c_parseDws(count,dwlist,pass,input,inputDws) result(dws)
+        type(DW), allocatable :: dws(:)
         integer, intent(out) :: count
         character(len=:), allocatable, intent(out) :: dwlist
         integer, intent(in) :: pass
-
+        type(string), allocatable, intent(in), optional :: input(:)
+        type(DW), allocatable, intent(in), optional :: inputDws(:)
+        type(string), allocatable :: inputActual(:)
         character(len=:), allocatable :: dwmemsze, line, prevLine, temp, temp2
         logical comment, skip
         integer i,j,unused
-        type(DW) thing
         type(variable), allocatable :: vars(:)
-        integer :: size, type, memszet
-        logical :: done, dwlabel
+        integer :: sizedw, type, memszet
+        logical :: done, dwlabel, ininst
         if (pass==1) then
-            allocate(dws(0),vars(0))
+            allocate(vars(0))
         end if
         dwlabel = .false.
         count = 0
@@ -1431,16 +1445,48 @@ module emit
         comment = .false.
         dwlist = ''
         prevLine = '' !to shut up gfortran
+        ininst = .false.
+        if (present(input)) then
+            inputActual = input
+            dwmemsze = typestr(memsze)
+            memszet = memsze
+        end if
+        if (present(inputDws)) then
+            dws = inputDws
+        else
+            allocate(dws(0))
+        end if
         do
-        line = getline(done)
-        if (done) return
+        if (present(input)) then
+            if (allocated(inputActual)) then
+                line = inputActual(1)%value
+                if (size(inputActual)==1) then
+                    deallocate(inputActual)
+                else
+                    inputActual = inputActual(2:)
+                end if
+            else
+                dws = dws
+                return
+            end if
+        else
+            line = getline(done)
+            if (done) return
+        end if
+
         call fixstr(line,comment)
-        if (line(:7)=='@MEMSZE ') then
+        if (getop(line,0,.false.)=='@ENDINST') then
+            ininst = .false.
+            cycle
+        else if (ininst) then
+            cycle
+        else if (getop(line,0,.false.)=='@INST') then
+            ininst = .true.
+            cycle
+        end if
+        if (.not.present(input).and.line(:7)=='@MEMSZE ') then
             memszet = strtype(getop(line,1))
             dwmemsze = c_type(memszet)
-            if (pass==2) then
-                write(2,'(A)') dwmemsze//'* Dws;'
-            end if
         else if (pass==1) then
             if (line(:1)=='.') then
                 dwlabel = .true.
@@ -1459,17 +1505,20 @@ module emit
                 
             end if
             if (dwlabel) then
-                thing%address = count
-                thing%label = prevLine
-                dws = [dws, thing]
+                if (.not.allocated(dws)) then
+                    allocate(dws(1))
+                    dws(1) = dw(prevLine,count)
+                else
+                    dws = [dws, dw(prevLine,count)]
+                end if
             end if
             if (line(2:2)=='W') then
-                size = 1
+                sizedw = 1
                 type = memszet
             else
                 temp = line(2:index(line,' ')-1)
                 type = strtype(temp)
-                size = ceiling(typesize(type)/real(typesize(memszet)))
+                sizedw = ceiling(typesize(type)/real(typesize(memszet)))
             end if
             i = 1
           5 if (line(i:i)=='['.or.line(i:i)==']') line = line(:i-1)//line(i+1:)
@@ -1499,21 +1548,22 @@ module emit
                             dwlist = dwlist// '*(('//c_type(type)//'*)Dws'//itoa(id)//&
                              '+'//trim(temp2)//') = '''//temp(i:i)//''';'//achar(10)
                         end if
-                        count = count + size
+                        count = count + sizedw
                     end do
-                    count = count - size
+                    count = count - sizedw
                 else
-                    temp = parseArg(temp,unused,vars)
+                    temp = parseArg(temp,unused,vars,dws)
                     temp2 = '            '
                     write (temp2, '(I0)') count
                     dwlist = dwlist//'*(('//c_type(type)//'*)Dws'//itoa(id)//&
                      '+'//trim(temp2)//') = '//temp(2:)//';'//achar(10)
                 end if
                 j = j + 1
-                count = count + size
+                count = count + sizedw
             end do
         end if
         call updatecom(line, comment)
         end do
-    end subroutine
+
+    end function
 end module
