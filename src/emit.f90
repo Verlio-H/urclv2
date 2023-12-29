@@ -404,7 +404,7 @@ module emit
                         call vars(getvar_index(vars,result1))%set('LLOD '//output2//' '//itoa(itemp+1),.true.)
                     end if
                 end if
-            case ('ADD','SUB','MLT','DIV','MOD','BSL','BSR','SBSR','NOR','AND','XOR')
+            case ('ADD','SUB','MLT','DIV','MOD','BSL','BSR','SBSR','OR','NOR','AND','NAND','XOR','XNOR')
                 if (type1/=32) then
                     call parseSmall(output2,result2,2,vars)
                     call parseSmall(output3,result3,3,vars)
@@ -629,6 +629,15 @@ module emit
                             end if
                         else
                         end if
+                    case ('OR')
+                        call vars(getvar_index(vars,result1))%set('OR '//output2//' '//output3)
+                        if (output2u/=''.and.output3u/='') then
+                            call vars(getvar_index(vars,result1))%set('OR '//output2u//' '//output3u,.true.)
+                        else if (output2u/='') then
+                            call vars(getvar_index(vars,result1))%set(' '//output2u,.true.)
+                        else
+                            call vars(getvar_index(vars,result1))%set(' '//output3u,.true.)
+                        end if
                     case ('NOR')
                         call vars(getvar_index(vars,result1))%set('NOR '//output2//' '//output3)
                         if (output2u/=''.and.output3u/='') then
@@ -645,7 +654,23 @@ module emit
                         else
                             call vars(getvar_index(vars,result1))%set(' R0',.true.)
                         end if
+                    case ('NAND')
+                        call vars(getvar_index(vars,result1))%set('NAND '//output2//' '//output3)
+                        if (output2u/=''.and.output3u/='') then
+                            call vars(getvar_index(vars,result1))%set('NAND '//output2u//' '//output3u,.true.)
+                        else
+                            call vars(getvar_index(vars,result1))%set(' -1',.true.)
+                        end if
                     case ('XOR')
+                        call vars(getvar_index(vars,result1))%set('XOR '//output2//' '//output3)
+                        if (output2u/=''.and.output3u/='') then
+                            call vars(getvar_index(vars,result1))%set('XOR '//output2u//' '//output3u,.true.)
+                        else if (output2u=='') then
+                            call vars(getvar_index(vars,result1))%set(' '//output3u,.true.)
+                        else
+                            call vars(getvar_index(vars,result1))%set(' '//output2u,.true.)
+                        end if
+                    case ('XNOR')
                         call vars(getvar_index(vars,result1))%set('XOR '//output2//' '//output3)
                         if (output2u/=''.and.output3u/='') then
                             call vars(getvar_index(vars,result1))%set('XOR '//output2u//' '//output3u,.true.)
@@ -656,11 +681,24 @@ module emit
                         end if
                     end select
                 end if
-            case ('FADD','FSUB','FMLT','FDIV')
+            case ('FADD','LFADD','FSUB','LFSUB','FMLT','LFMLT','FDIV','LFDIV')
                 call parseSmall(output2,result2,2,vars)
                 call parseSmall(output3,result3,3,vars)
                 result1 = result1(2:)
-                call vars(getvar_index(vars,result1))%set(op//' '//output2//' '//output3)
+                if (op(:1)=='L') then
+                    call vars(getvar_index(vars,result1))%set(op(2:)//' '//output2//' '//output3)
+                else
+                    call vars(getvar_index(vars,result1))%set(op//' '//output2//' '//output3)
+                end if
+            case ('FBRL','LFBRL','FBRG','LFBRG','FBLE','LFBLE','FBGE','LFBGE','FBRE','LFBRE','FBNE','LFBNE')
+                call parseSmall(output2,result2,2,vars)
+                call parseSmall(output3,result3,3,vars)
+                result1 = result1(2:)
+                if (op(:1)=='L') then
+                    call vars(getvar_index(vars,result1))%set('S'//op(3:)//' '//output2//' '//output3)
+                else
+                    call vars(getvar_index(vars,result1))%set('S'//op(2:)//' '//output2//' '//output3)
+                end if
             case default
                 call throw('unknown instruction '//op//' for arch IRIS')
                 
