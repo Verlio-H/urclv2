@@ -8,6 +8,7 @@ module helper
         type(string), allocatable :: readFile(:)
         logical :: done
         open(file=fname,unit=3,action='read')
+        allocate(readFile(0))
         do
             readFile = [readFile, string()]
             readFile(size(readFile))%value = getline(done,3)
@@ -17,6 +18,22 @@ module helper
         close(3)
     end function
 
+    pure function tostr(input)
+        character(len=*), intent(in) :: input
+        type(string), allocatable :: tostr(:)
+        character(len=len(input)) :: inputcpy
+        integer :: indx
+        inputcpy = input
+        allocate(tostr(0))
+        do while (inputcpy/='')
+            indx = index(inputcpy,achar(10))
+            if (indx==0) indx = len(trim(inputcpy))+1
+            tostr = [tostr, string()]
+            tostr(size(tostr))%value = inputcpy(:indx-1)
+            inputcpy = inputcpy(indx+1:)
+        end do
+    end function
+    
     pure function itoa(int)
         integer, intent(in) :: int
         character(len=:), allocatable :: itoa

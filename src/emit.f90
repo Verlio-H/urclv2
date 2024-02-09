@@ -1,7 +1,10 @@
 module emit
     use inst
     implicit none
+    integer :: maxregplus1
+    integer :: maxreg
 
+    character(len=:), allocatable :: colormode
    contains
 
     subroutine init()
@@ -50,6 +53,7 @@ module emit
             if (incopengl.or.incthread) write(2,'(A)') '#include "include/c11threads.h"'
         else if (arch=='IRIS') then
             write(2,'(A)') 'BITS 16','MINREG 25'
+        else if (arch=='SILK') then
         else
             print '(A)', 'init not implemented for this architecture'
         end if
@@ -71,6 +75,9 @@ module emit
             if (incdiv32) then
                 write(2,'(A)') div32
             end if
+        else if (arch=='SILK') then
+            write(2,'(A)') 'SCAL FREE R1'
+            write(2,'(A)') 'SCAL EXIT R0'
         else
             print '(A)', 'end not implemented for this architecture'
         end if
@@ -182,7 +189,7 @@ module emit
             if (type1==8.and.type2/=8) then
                 call throw('warning: destination of imm is smaller than immediate size')
             end if
-            if (addr<=18) then
+            if (addr<=maxreg) then
                 if (type1==8.and.type2/=8) then
                     call app('IMM R'//itoa(addr)//' '//result2//' 0xFF')
                 else
@@ -190,23 +197,29 @@ module emit
                 end if
             else
                 if (type1==8.and.type2/=8) then
-                    call app('IMM R21 '//result2//' 0xFF')
-                    call app('STR M'//itoa(addr-19)//' R21')
+                    if (arch=='IRIS') then
+                        call app('IMM R21 '//result2//' 0xFF')
+                        call app('STR M'//itoa(addr-maxregplus1)//' R21')
+                    else if (arch=='SILK') then
+                        call app('IMM R10 '//result2//' 0xFF')
+                        call app('IMM R15 '//itoa(addr-maxregplus1))
+                        call app('LSTR R1 R10 R15')
+                    end if
                 else
-                    call app('STR M'//itoa(addr-19)//' '//result2)
+                    call app('STR M'//itoa(addr-maxregplus1)//' '//result2)
                 end if
             end if
         else
             read(result2,*) int
-            if (addr<=19) then
+            if (addr<=maxregplus1) then
                 call app('IMM R'//itoa(addr)//' '//itoa(iand(int,2**16-1)))
             else
-                call app('STR M'//itoa(addr-20)//' '//itoa(iand(int,2**16-1)))
+                call app('STR M'//itoa(addr-maxregplus1-1)//' '//itoa(iand(int,2**16-1)))
             end if
-            if (addr<=18) then
+            if (addr<=maxreg) then
                 call app('IMM R'//itoa(addr+1)//' '//itoa(shiftr(int,16)))
             else
-                call app('STR M'//itoa(addr-19)//' '//itoa(shiftr(int,16)))
+                call app('STR M'//itoa(addr-maxregplus1)//' '//itoa(shiftr(int,16)))
             end if
         end if
     end subroutine
@@ -462,7 +475,7 @@ module emit
                         else
                             itemp3 = 0
                         end if
-                        if (itemp==itemp2.or.itemp==itemp3.or.itemp>=18) then
+                        if (itemp==itemp2.or.itemp==itemp3.or.itemp>=maxreg) then
                             do itemp=1,24
                                 if (itemp/=itemp2.and.itemp/=itemp2+1.and.itemp+1/=itemp2) then
                                     if (itemp/=itemp3.and.itemp/=itemp3+1.and.itemp+1/=itemp3) then
@@ -1077,7 +1090,7 @@ module emit
             case ('JMP')
                 call app('goto *('//result1//');')
             case ('CAL')
-                call app('cstack[csp]=&&line'//itoa(lnum2+1)//';')
+                call app('cstack[csp]=&&line'//itoa(id)//'_'//itoa(lnum2+1)//';')
                 call app('csp++;')
                 call app('goto *('//result1//');')
             case ('PSH')
@@ -1132,7 +1145,7 @@ module emit
             output2 = result2(:1) ! var missused here
             result2 = result2(2:)
             if (output2=='V') then
-                if (vars(getvar_index(vars, result2))%location>=19) then
+                if (vars(getvar_index(vars, result2))%location>=maxregplus1) then
                     call app('CPY '//output1//' '//itoa(vars(getvar_index(vars, result2))%location))
                     if (type2==32) then
                         call app('INC R25 '//output1)
@@ -1296,9 +1309,20 @@ module emit
                 result3 = result3(2:)
                 result4 = result4(2:)
                 call app('mtx_lock(mtxptr);')
-                call app('data['//result3//'*width*4+'//result2//'*4] = '//result4//';')
-                call app('data['//result3//'*width*4+'//result2//'*4+1] = '//result4//';')
-                call app('data['//result3//'*width*4+'//result2//'*4+2] = '//result4//';')
+                select case (colormode)
+                case ('BIN')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4] = '//result4//'>=1;')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+1] = '//result4//'>=1;')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+2] = '//result4//'>=1;')
+                case ('MONO')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4] = '//result4//';')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+1] = '//result4//';')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+2] = '//result4//';')
+                case ('RGB8')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4] = (('//result4//'&0xE0)>>5)*36;')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+1] = ('//result4//'&0x1C)*9;')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+2] = ('//result4//'&3)*85;')
+                end select
                 call app('mtx_unlock(mtxptr);')
                 incopengl = .true.
             case default
@@ -1369,23 +1393,36 @@ module emit
                 call app('tmp1.v32=width;')
                 result2 = 'tmp1.v'//trim(typestr(type1))
                 call vars(getvar_index(vars, result1))%set(result2)
+                incopengl = .true.
             case ('%SIZEY')
                 call app('tmp1.v32=height;')
                 result2 = 'tmp1.v'//trim(typestr(type1))
                 call vars(getvar_index(vars, result1))%set(result2)
+                incopengl = .true.
             case ('%EXIT')
 
                 call app('mtx_lock(mtxptr);'//achar(10)//'tmp1.v32=status;'//achar(10)//'mtx_unlock(mtxptr);')
                 result2 = 'tmp1.v'//trim(typestr(type1))
                 call vars(getvar_index(vars, result1))%set(result2)
+                incopengl = .true.
             case ('%PIXEL')
                 result3 = parseArg(arg3, type1, vars, dws)
                 result4 = parseArg(arg4, type1, vars, dws)
                 result3 = result3(2:)
                 result4 = result4(2:)
                 call app('mtx_lock(mtxptr);')
-                call app(result1//' = data['//result3//'*width*4+'//result4//'*4];')
+                select case (colormode)
+                case ('BIN')
+                    call app(result1//' = data[(height-'//result3//')*width*4+'//result4//'*4];')
+                case ('MONO')
+                    call app(result1//' = data[(height-'//result3//')*width*4+'//result4//'*4];')
+                case ('RGB8')
+                    call app(result1//' = data[(height-'//result3//')*width*4+'//result4//'*4+2]/85+'//&
+                    'data[(height-'//result3//')*width*4+'//result4//'*4+1]/9+'//&
+                    '(data[(height-'//result3//')*width*4+'//result4//'*4+2]/36<<5);')
+                end select
                 call app('mtx_unlock(mtxptr);')
+                incopengl = .true.
             case default
                 call throw('unknown port "'//result2//'" for target C')
             end select
@@ -1459,6 +1496,152 @@ module emit
             arg = getop(line,i,.false.)
         end do
     end subroutine
+
+    function silk_parseDws(count,dwlist,pass,input,inputDws) result(dws)
+        type(DW), allocatable :: dws(:)
+        integer, intent(out) :: count
+        character(len=:), allocatable, intent(out) :: dwlist
+        integer, intent(in) :: pass
+        type(string), allocatable, intent(in), optional :: input(:)
+        type(DW), allocatable, intent(in), optional :: inputDws(:)
+        type(string), allocatable :: inputActual(:)
+        character(len=:), allocatable :: dwmemsze, line, prevLine, temp
+        logical comment, skip
+        integer i,j,unused
+        type(variable), allocatable :: vars(:)
+        integer :: sizedw, type, memszet
+        logical :: done, dwlabel, ininst
+        if (pass==1) then
+            allocate(vars(0))
+        end if
+        dwlabel = .false.
+        count = 0
+        dwmemsze = ''
+        comment = .false.
+        dwlist = ''
+        prevLine = '' !to shut up gfortran
+        ininst = .false.
+        if (present(input)) then
+            inputActual = input
+            dwmemsze = typestr(memsze)
+            memszet = memsze
+        end if
+        if (present(inputDws)) then
+            dws = inputDws
+        else
+            allocate(dws(0))
+        end if
+        do
+        if (present(input)) then
+            if (allocated(inputActual)) then
+                line = inputActual(1)%value
+                if (size(inputActual)==1) then
+                    deallocate(inputActual)
+                else
+                    inputActual = inputActual(2:)
+                end if
+            else
+                dws = dws
+                return
+            end if
+        else
+            line = getline(done)
+            if (done) return
+        end if
+
+        call fixstr(line,comment)
+        if (getop(line,0,.false.)=='@ENDINST') then
+            ininst = .false.
+            cycle
+        else if (ininst) then
+            cycle
+        else if (getop(line,0,.false.)=='@INST') then
+            ininst = .true.
+            cycle
+        end if
+        if (.not.present(input).and.line(:7)=='@MEMSZE ') then
+            memszet = strtype(getop(line,1))
+            dwmemsze = c_type(memszet)
+        else if (pass==1) then
+            if (line(:1)=='.') then
+                dwlabel = .true.
+                prevLine = line
+            else if (line(:3)=='DW '.or.line(:3)=='D8 '.or.line(:4)=='D16 '.or.line(:4)=='D32 '.or.line(:6)=='DADDR '.or.&
+                & line(:6)=='DREAL '.or.line(:7)=='DLREAL ') then
+                
+            else if (getop(line,0,.false.)/='') then
+                dwlabel = .false.
+            end if
+        end if
+        if (line(:3)=='DW '.or.line(:3)=='D8 '.or.line(:4)=='D16 '.or.line(:4)=='D32 '.or.line(:6)=='DADDR '.or.&
+        & line(:6)=='DREAL '.or.line(:7)=='DLREAL ') then
+            if (dwmemsze=='') then
+                call throw('memsize must be declared before dw statments are used')
+                
+            end if
+            if (dwlabel) then
+                if (.not.allocated(dws)) then
+                    allocate(dws(1))
+                    dws(1) = dw(prevLine,count)
+                else
+                    dws = [dws, dw(prevLine,count)]
+                end if
+            end if
+            if (line(2:2)=='W') then
+                sizedw = 1
+                type = memszet
+            else
+                temp = line(2:index(line,' ')-1)
+                type = strtype(temp)
+                sizedw = ceiling(typesize(type)/real(typesize(memszet)))
+            end if
+            i = 1
+          5 if (line(i:i)=='['.or.line(i:i)==']') line = line(:i-1)//line(i+1:)
+            i = i + 1
+            if (i<=len(line)) goto 5
+            j = 1
+            do while (getop(line,j,.false.)/='')
+                temp = getop(line,j)
+                if (temp(:1)=='"') then
+                    skip = .false.
+                    temp = temp(2:len(trim(temp))-1)
+                    do i=1,len(temp)
+                        if (skip) then
+                            skip = .false.
+                            cycle
+                        else if (temp(i:i)=='"') then
+                            exit
+                        else if (temp(i:i)=='\') then
+                            dwlist = dwlist//' '''//temp(i:i+1)//''''
+                            skip = .true.
+                            if (sizedw==32) then
+                                dwlist = dwlist//' 0'
+                            end if
+                        else
+                            dwlist = dwlist//' '''//temp(i:i)//''''
+                            if (sizedw==32) then
+                                dwlist = dwlist//' 0'
+                            end if
+                        end if
+                        count = count + sizedw
+                    end do
+                    count = count - sizedw
+                else
+                    temp = parseArg(temp,unused,vars,dws)
+                    if (unused==32) then
+                        read(temp(2:),*) unused
+                        dwlist = dwlist//' '//itoa(iand(unused,65535))//' '//itoa(unused/65536)
+                    else
+                        dwlist = dwlist//' '//temp(2:)
+                    end if
+                end if
+                j = j + 1
+                count = count + sizedw
+            end do
+        end if
+        call updatecom(line, comment)
+        end do
+    end function
 
     function c_parseDws(count,dwlist,pass,input,inputDws) result(dws)
         type(DW), allocatable :: dws(:)

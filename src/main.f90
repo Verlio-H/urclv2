@@ -72,11 +72,8 @@
 !  IN%SIZEY ! get screen size y
 !  IN%EXIT ! fetch any critical errors
 module compilervars
-    use includes, only: print32,div32,opengl
+    use includes
     ! C   ,IRIS,SILK
-    type string
-        character(len=:), allocatable :: value
-    end type
     type DW
         character(len=:), allocatable :: label
         integer address
@@ -133,7 +130,12 @@ program compiler
     character(len=64) :: arguments, ifile, ofile
     logical :: output = .false.
     logical :: archarg = .false.
+    ! compiler stuff
+    type(string), allocatable :: insts(:)
+
     allocate(defines(6))
+
+    colormode = 'MONO'
 
     lnum = 0
     lnum2 = 0
@@ -152,10 +154,15 @@ program compiler
             ofile = arguments
             output = .false.
         else if (archarg) then
-            if (arguments=='C') then
+            if (arguments=='C'.or.arguments=='c') then
                 arch = 'C'
                 if (ofile == 'output.urcl') then
                     ofile = 'output.c'
+                end if
+            else if (arguments=='SILK'.or.arguments=='silk'.or.arguments=='Silk') then
+                arch = 'SILK'
+                if (ofile == 'output.urcl') then
+                    ofile = 'output.silk'
                 end if
             end if
             archarg = .false.
@@ -193,7 +200,7 @@ program compiler
         defines(6)%value = '8'
         defines(6)%int = .true.
         defines(6)%ivalue = 8
-    else if (arch=='IRIS') then
+    else if (arch=='IRIS'.or.arch=='SILK') then
         defines(1)%name = '@SIZE8'
         defines(1)%value = '1'
         defines(1)%int = .true.
@@ -220,7 +227,15 @@ program compiler
         defines(6)%ivalue = 1
     end if
 
+    if (arch=='IRIS') then
+        maxreg = 18
+        maxregplus1 = 19
+    else if (arch=='SILK') then
+        maxreg = 14
+        maxregplus1 = 15
+    end if
     open(1, file=trim(ifile), action='read')
+
     open(2, file=trim(ofile), action='write')
     call instInit()
     !call compile(readFile('insts.urcl'))
@@ -234,6 +249,8 @@ program compiler
     stack(1)%id = unique
     id = unique
     unique = unique + 1
+    insts = tostr(includeinsts)
+    call compile(insts)
     call compile()
     call insertCalledTrans()
     call init()
@@ -248,6 +265,10 @@ program compiler
     else if (arch=='IRIS') then
         compiled = replacemem(compiled,max(maximumLoc-19,0))
         compiled2 = replacemem(compiled2,max(maximumLoc-19,0))
+        write(2,'(A)') compiled
+        call end()
+        write(2,'(A)') compiled2
+    else if (arch=='SILK') then
         write(2,'(A)') compiled
         call end()
         write(2,'(A)') compiled2
@@ -277,7 +298,6 @@ contains
         else
             fromstr = .false.
         end if
-        
         comment = .false.
         compiled = ''
 
@@ -293,8 +313,16 @@ contains
             dws = c_parseDws(dwcount, dwlist, 2, input, dws)
             call app(c_type(memsze)//'* Dws'//itoa(id)//'=malloc('//itoa(dwcount)//'*'//itoa(typesize(memsze))//');')
             call app(dwlist)
+        else if (.not.fromstr.and.arch=='SILK') then
+            dws = silk_parseDws(dwcount, dwlist, 1)
+            rewind 1
+            dws = silk_parseDws(dwcount, dwlist, 2, inputDws=dws)
+            rewind 1
+        else if (arch=='SILK') then
+            dws = silk_parseDws(dwcount, dwlist, 1, input)
+            call app('IMM R1 '//itoa(dwcount)//achar(10)//'SCAL MALLOC R1')
+            dws = silk_parseDws(dwcount, dwlist, 2, input, dws)
         end if
-
 
         do
         if (fromstr) then
@@ -325,7 +353,7 @@ contains
                     lnum2 = lnum2 + 1
                     call app('line'//itoa(id)//'_'//itoa(lnum2)//': ;')
                 end select
-            else if (arch=='IRIS'.and.(tmpstr/=''.and.tmpstr(:1)/='@')) then
+            else if ((arch=='IRIS'.or.arch=='SILK').and.(tmpstr/=''.and.tmpstr(:1)/='@')) then
                 select case (tmpstr)
                 case ('D8','D16','D32','DREAL','DLREAL','DADDR','DW')
                 case default
@@ -363,7 +391,11 @@ contains
             case ('')
                 continue
             case ('@INST')
-                call inststart(getop(line,1),comment)
+                if (fromstr) then
+                    call inststart(getop(line,1),comment,input)
+                else
+                    call inststart(getop(line,1),comment)
+                end if
             case ('@VAR')
                 call temp%create(strtype(getop(line,2)), getop(line,1))
                 vars = [vars, temp]
@@ -383,6 +415,8 @@ contains
                 call minstack(getop(line,1))
             case ('@MINCSTACK')
                 call mincstack(getop(line,1))
+            case ('@COLORMODE')
+                colormode = getop(line,1)
             case ('LLOD',& !memory 
                  ! unsigned
                  &'ADD','SUB','MLT','DIV','MOD','BSL','BSR','BGE','BRG','BLE','BRL','BRE','BNE','BRC','BNC','AND','OR','XOR',&

@@ -1,4 +1,8 @@
 module includes
+
+    type string
+        character(len=:), allocatable :: value
+    end type
     character(len=*), parameter :: print32 = &
      '.print32'//achar(10)//&
      'HPSH R3'//achar(10)//&
@@ -370,4 +374,39 @@ module includes
      '    glfwTerminate();'//achar(10)//&
      '    thrd_join(renderthread, NULL);'//achar(10)//&
      '}'
+    character(len=*), parameter :: includeinsts = '@inst ABS'//achar(10)//&
+     '    @trans A B'//achar(10)//&
+     '    @types V* **'//achar(10)//&
+     '    @arch IRIS'//achar(10)//&
+     '    @start'//achar(10)//&
+     '    MOV A B'//achar(10)//&
+     '    BRP .end B'//achar(10)//&
+     '    NEG A A'//achar(10)//&
+     '    .end'//achar(10)//&
+     '    @endtrans'//achar(10)//&
+     '@endinst'//achar(10)//&
+     ''//achar(10)//&
+     '@inst SDIV'//achar(10)//&
+     '    @trans A B C'//achar(10)//&
+     '    @types ** ** **'//achar(10)//&
+     '    @arch IRIS SILK'//achar(10)//&
+     '    @start'//achar(10)//&
+     '    @var temp 16'//achar(10)//&
+     '    IMM temp 0'//achar(10)//&
+     '    @var temp2 32'//achar(10)//&
+     '    BRP .sdiv_1 B'//achar(10)//&
+     '    IMM temp 1'//achar(10)//&
+     '    .sdiv_1'//achar(10)//&
+     '    ABS temp2 B'//achar(10)//&
+     '    @var temp3 32'//achar(10)//&
+     '    BRP .sdiv_2 C'//achar(10)//&
+     '    XOR temp temp 1'//achar(10)//&
+     '    .sdiv_2'//achar(10)//&
+     '    ABS temp3 C'//achar(10)//&
+     '    DIV A temp2 temp3'//achar(10)//&
+     '    BRZ .end temp'//achar(10)//&
+     '    NEG A A'//achar(10)//&
+     '    .end'//achar(10)//&
+     '    @endtrans'//achar(10)//&
+     '@endinst'
 end module

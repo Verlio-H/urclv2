@@ -153,16 +153,27 @@ contains
         transExists = .false.
     end function
     
-    subroutine inststart(name,comment)
+    subroutine inststart(name,comment,input)
         character(len=*), intent(in) :: name
         logical, intent(inout) :: comment
+        type(string), allocatable, intent(inout), optional :: input(:)
         if (transExists(name)) call throw('instruction with this name already declared')
         instName = name
         parseinst: block
             character(len=:), allocatable :: line, instruction
             do
-            line = getline()
-            lnum = lnum + 1
+            if (present(input)) then
+                if (.not.allocated(input)) call throw('unexpected EOF')
+                line = input(1)%value
+                if (size(input)==1) then
+                    deallocate(input)
+                else
+                    input = input(2:)
+                end if
+            else
+                line = getline()
+                lnum = lnum + 1
+            end if
             call fixstr(line,comment)
             instruction = getop(line,0,.false.)
             call updatecom(line,comment)
@@ -170,7 +181,11 @@ contains
             if (instruction(:1)/='@') call throw('unexpected executable statement in instruction definition')
             select case (instruction)
             case ('@TRANS')
-                call starttrans(line,comment)
+                if (present(input)) then
+                    call starttrans(line,comment,input)
+                else
+                    call starttrans(line,comment)
+                end if
             case ('@ENDINST')
                 exit parseInst
             case ('@ENDTRANS')
@@ -186,11 +201,12 @@ contains
         end block parseInst
     end subroutine
 
-    subroutine starttrans(arguments,comment)
+    subroutine starttrans(arguments,comment,input)
         character(len=:), intent(in), allocatable :: arguments
         logical, intent(inout) :: comment
+        type(string), allocatable, intent(inout), optional :: input(:)
         character(len=:), allocatable :: line, op, arg, tmpstr
-        integer :: i
+        integer :: i, indx
         translations = [translations, Trans()]
         associate (this => translations(size(translations)))
         this%name = instName
@@ -207,97 +223,116 @@ contains
             this%value(i)=.false.
         end do
         do
-        line = getline()
-        lnum = lnum + 1
-        call fixstr(line, comment)
-        op = getop(line,0,.false.)
-        call updatecom(line,comment)
-        if (op(:1)/='@') call throw('unexpected executable statement in translation definition')
-        select case (op)
-        case ('@START')
-            allocate(this%code(0))
-            do
-            line = getline()
-            lnum = lnum+1
-            tmpstr = line
-            call fixstr(tmpstr,comment)
-            if (getop(tmpstr,0,.false.)=='@ENDTRANS') exit
-            call updatecom(line,comment)
-            this%code = [this%code, string(line)]
-            end do
-            return
-        case ('@TYPES')
-            do i=1,size(this%types)
-                arg = getop(line,i,.false.)
-                if (arg=='') call throw('not enough types provided')
-                if (index(arg,'_VAL')/=0) then
-                    this%value(i) = .true.
-                    arg = arg(:index(arg,'_VAL')-1)
+            if (present(input)) then
+                if (.not.allocated(input)) call throw('unexpected EOF')
+                line = input(1)%value
+                if (size(input)==1) then
+                    deallocate(input)
+                else
+                    input = input(2:)
                 end if
-                if ((arg(:1)/='V'.and.arg(:1)/='I'.and.arg(:1)/='*')) call throw('invalid type')
-                this%types(i)%value = arg
-            end do
-            if (getop(line,size(this%types)+1,.false.)/='') call throw('too many types provided')
-        case ('@COMPILED')
-            arg = getop(line,1)
-            if (arch(:1)=='C') then
-                if (arg/='C') then
-                    translations = translations(:size(translations)-1)
-                    line = getline()
-                    lnum = lnum + 1
-                    call fixstr(line,comment)
-                    do while (getop(line,0,.false.)/='@ENDTRANS')
-                        call updatecom(line,comment)
-                        line = getline()
-                        lnum = lnum + 1
-                        call fixstr(line,comment)
-                        if (getop(line,0,.false.)=='@ENDINST') then
-                            call throw('erroneous @endinst, expected @endtrans')
-                        else if (getop(line,0,.false.)=='@INST') then
-                            call throw('@inst cannot be nested')
-                        end if
-                    end do
-                    call updatecom(line,comment)
-                    return
-                end if
-            else if (arch=='IRIS') then
-                if (arg/='URCL'.and.arg/='IRIS') then
-                    translations = translations(:size(translations)-1)
-                    line = getline()
-                    lnum = lnum + 1
-                    call fixstr(line,comment)
-                    do while (getop(line,0,.false.)/='@ENDTRANS')
-                        call updatecom(line,comment)
-                        line = getline()
-                        lnum = lnum + 1
-                        call fixstr(line,comment)
-                        if (getop(line,0,.false.)=='@ENDINST') then
-                            call throw('erroneous @endinst, expected @endtrans')
-                        else if (getop(line,0,.false.)=='@INST') then
-                            call throw('@inst cannot be nested')
-                        end if
-                    end do
-                    call updatecom(line,comment)
-                    return
-                end if
+            else
+                line = getline()
+                lnum = lnum + 1
             end if
-            this%compiled = .true.
-        case ('@VAR', '@DEFINE')
-            call throw(op(2:)//' statements should only be in executable sections')
-        case ('@ENDTRANS')
-            call throw('warning: no executable statements in translation',.false.)
-            allocate(translations(size(translations))%code(1))
-            translations(size(translations))%code(1)%value = ''
-            return
-        case ('@ENDINST')
-            call throw('expected @endtrans')
-        case ('@TRANS')
-            call throw('@trans cannot be nested')
-        case ('@INST')
-            call throw('@inst cannot be within a translation block')
-        case default
-            call throw('unknown statement')
-        end select
+            call fixstr(line, comment)
+            op = getop(line,0,.false.)
+            call updatecom(line,comment)
+            if (op(:1)/='@') call throw('unexpected executable statement in translation definition')
+            select case (op)
+            case ('@START')
+                allocate(this%code(0))
+                do
+                    if (present(input)) then
+                        if (.not.allocated(input)) call throw('unexpected EOF')
+                        line = input(1)%value
+                        if (size(input)==1) then
+                            deallocate(input)
+                        else
+                            input = input(2:)
+                        end if
+                    else
+                        line = getline()
+                        lnum = lnum + 1
+                    end if
+                    tmpstr = line
+                    call fixstr(tmpstr,comment)
+                    if (getop(tmpstr,0,.false.)=='@ENDTRANS') exit
+                    call updatecom(line,comment)
+                    this%code = [this%code, string(line)]
+                end do
+                return
+            case ('@TYPES')
+                do i=1,size(this%types)
+                    arg = getop(line,i,.false.)
+                    if (arg=='') call throw('not enough types provided')
+                    if (index(arg,'_VAL')/=0) then
+                        this%value(i) = .true.
+                        arg = arg(:index(arg,'_VAL')-1)
+                    end if
+                    if ((arg(:1)/='V'.and.arg(:1)/='I'.and.arg(:1)/='*')) call throw('invalid type')
+                    this%types(i)%value = arg
+                end do
+                if (getop(line,size(this%types)+1,.false.)/='') call throw('too many types provided')
+            case ('@COMPILED', '@ARCH')
+                indx = index(line,' ')
+                if (arch(:1)=='C'.and.index(line(indx:),'C')==0.or.arch=='IRIS'.and.(index(line(indx:),'URCL')==0.and.&
+                 index(line(indx:),'IRIS')==0)) then
+                    translations = translations(:size(translations)-1)
+                    if (present(input)) then
+                        if (.not.allocated(input)) call throw('unexpected EOF')
+                        line = input(1)%value
+                        if (size(input)==1) then
+                            deallocate(input)
+                        else
+                            input = input(2:)
+                        end if
+                    else
+                        line = getline()
+                        lnum = lnum + 1
+                    end if
+                    call fixstr(line,comment)
+                    do while (getop(line,0,.false.)/='@ENDTRANS')
+                        call updatecom(line,comment)
+                        if (present(input)) then
+                            if (.not.allocated(input)) call throw('unexpected EOF')
+                            line = input(1)%value
+                            if (size(input)==1) then
+                                deallocate(input)
+                            else
+                                input = input(2:)
+                            end if
+                        else
+                            line = getline()
+                            lnum = lnum + 1
+                        end if
+                        call fixstr(line,comment)
+                        if (getop(line,0,.false.)=='@ENDINST') then
+                            call throw('erroneous @endinst, expected @endtrans')
+                        else if (getop(line,0,.false.)=='@INST') then
+                            call throw('@inst cannot be nested')
+                        end if
+                    end do
+                    call updatecom(line,comment)
+                    return
+                end if
+                if (op=='@COMPILED') this%compiled = .true.
+            case ('@VAR', '@DEFINE')
+                call throw(op(2:)//' statements should only be in executable sections')
+            case ('@ENDTRANS')
+                call throw('warning: no executable statements in translation',.false.)
+                allocate(translations(size(translations))%code(1))
+                translations(size(translations))%code(1)%value = ''
+                return
+            case ('@ENDINST')
+                call throw('expected @endtrans')
+            case ('@TRANS')
+                call throw('@trans cannot be nested')
+            case ('@INST')
+                call throw('@inst cannot be within a translation block')
+            case default
+                call throw('unknown statement')
+            end select
         end do
 
         end associate

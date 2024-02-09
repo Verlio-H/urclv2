@@ -190,7 +190,7 @@ module var
             this%type = int(type, 1)
             this%name = trim(name)
             return
-        else if (arch=='IRIS') then
+        else if (arch=='IRIS'.or.arch=='SILK') then
             call app('//var created at '//itoa(currentLoc))
             this%type = int(type,1)
             this%name = trim(name)
