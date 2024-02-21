@@ -50,7 +50,11 @@ module emit
             &'int width, height, status;',&
             &'void* mtxptr;',&
             &'void* windowptr;'
-            if (incopengl.or.incthread) write(2,'(A)') '#include "include/c11threads.h"'
+            if (incopengl.or.incthread) then
+                write(2,'(A)') '#include "include/c11threads.h"'
+                write(2,'(A)') 'thrd_t* threads;'
+                write(2,'(A)') 'int sizethreads;'
+            end if
         else if (arch=='IRIS') then
             write(2,'(A)') 'BITS 16','MINREG 25'
         else if (arch=='SILK') then
@@ -65,7 +69,15 @@ module emit
             if (incopengl) then
                 write(2,'(A)') opengl
             else
-                write(2,'(A)') 'int main() { run(); }'
+                write(2,'(A)') 'int main() { '
+                if (incopengl.or.incthread) then
+                    write(2,'(A)') 'threads = malloc(0*sizeof(thrd_t));','sizethreads = 0;'
+                end if
+                write(2,'(A)') 'run();'
+                if (incopengl.or.incthread) then
+                    write(2,'(A)') 'for (int i=0; i<sizethreads; ++i) thrd_join(threads+i,NULL);'
+                end if
+                write(2,'(A)') '}'
             end if
         else if (arch=='IRIS') then
             write(2,'(A)') 'HLT'
@@ -845,7 +857,7 @@ module emit
                 if (.not.memdec) then
                     call throw('size of memory must be declared before use of LLOD')
                 end if
-                call app('tmp1.v32=*('//c_type(type1)//'*)((long long)tmp2.vADDR+tmp3.v64);')
+                call app('tmp1.v'//typestr(type1)//'=*('//c_type(type1)//'*)((long long)tmp2.vADDR+tmp3.v64);')
             end select
             select case (op)
             case ('BGE','BRG','BLE','BRL','BRE','BNE','BRC','BNC','SBGE','SBRG','SBLE','SBRL','SBRC','SBNC','FBGE','FBRG','FBLE',&
@@ -979,7 +991,7 @@ module emit
             end select
             select case(op)
             case ('MOV','SMOV')
-                call app('tmp1.v32=tmp2.v32;')
+                call app('tmp1.v64=tmp2.v64;')
             case ('ABS')
                 call app('tmp1.v32=abs((int)tmp2.v32);')
             case ('NEG')
@@ -1303,30 +1315,33 @@ module emit
                 call app('printf("%c",'//result2//');')
             case ('%NUMB')
                 call app('printf("%d",'//result2//');')
+            case ('%FLOAT')
+                call app('printf("%f",'//result2//');')
             case ('%PIXEL')
                 result3 = parseArg(arg3, type1, vars, dws)
                 result4 = parseArg(arg4, type1, vars, dws)
                 result3 = result3(2:)
                 result4 = result4(2:)
                 call app('mtx_lock(mtxptr);')
+                call app('tmp1.v'//typestr(type1)//' = '//result4//';')
                 select case (colormode)
                 case ('BIN')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4] = '//result4//'>=1;')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+1] = '//result4//'>=1;')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+2] = '//result4//'>=1;')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4] = tmp1.v32>=1;')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+1] = tmp1.v32>=1;')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+2] = tmp1.v32>=1;')
                 case ('MONO')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4] = '//result4//';')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+1] = '//result4//';')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+2] = '//result4//';')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4] = tmp1.v32;')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+1] = tmp1.v32;')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+2] = tmp1.v32;')
                 case ('RGB8')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4] = (('//result4//'&0xE0)>>5)*36;')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+1] = ('//result4//'&0x1C)*9;')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+2] = ('//result4//'&3)*85;')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4] = ((tmp1.v32&0xE0)>>5)*36;')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+1] = (tmp1.v32&0x1C)*9;')
+                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+2] = (tmp1.v32&3)*85;')
                 end select
                 call app('mtx_unlock(mtxptr);')
                 incopengl = .true.
             case default
-                call throw('unknown port "'//result2//'" for target C')
+                call throw('unknown port "'//result1//'" for target C')
             end select
         else if (arch=='IRIS') then
             select case (result1)
@@ -1760,14 +1775,14 @@ module emit
                         else if (temp(i:i)=='\') then
                             temp2 = '            '
                             write (temp2, '(I0)') count
-                            dwlist = dwlist//'*(('//c_type(type)//'*)Dws'//itoa(id)//&
-                             '+'//trim(temp2)//') = '''//temp(i:i+1)//''';'//achar(10)
+                            dwlist = dwlist//'*(('//c_type(type)//'*)(Dws'//itoa(id)//&
+                             '+'//trim(temp2)//')) = '''//temp(i:i+1)//''';'//achar(10)
                             skip = .true.
                         else
                             temp2 = '            '
                             write (temp2, '(I0)') count
-                            dwlist = dwlist// '*(('//c_type(type)//'*)Dws'//itoa(id)//&
-                             '+'//trim(temp2)//') = '''//temp(i:i)//''';'//achar(10)
+                            dwlist = dwlist// '*(('//c_type(type)//'*)(Dws'//itoa(id)//&
+                             '+'//trim(temp2)//')) = '''//temp(i:i)//''';'//achar(10)
                         end if
                         count = count + sizedw
                     end do
@@ -1776,8 +1791,8 @@ module emit
                     temp = parseArg(temp,unused,vars,dws)
                     temp2 = '            '
                     write (temp2, '(I0)') count
-                    dwlist = dwlist//'*(('//c_type(type)//'*)Dws'//itoa(id)//&
-                     '+'//trim(temp2)//') = '//temp(2:)//';'//achar(10)
+                    dwlist = dwlist//'*(('//c_type(type)//'*)(Dws'//itoa(id)//&
+                     '+'//trim(temp2)//')) = '//temp(2:)//';'//achar(10)
                 end if
                 j = j + 1
                 count = count + sizedw

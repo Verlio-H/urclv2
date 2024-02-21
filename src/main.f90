@@ -113,6 +113,7 @@ module compilervars
     integer :: id
     character(len=:), allocatable :: compiled
     character(len=:), allocatable :: compiled2
+    character(len=:), allocatable :: compiled3
 
     type(string), allocatable :: args(:)
     type(string), allocatable :: parsed(:)
@@ -255,6 +256,7 @@ program compiler
     call insertCalledTrans()
     call init()
     if (arch(:1)=='C') then
+        write(2,'(A)') compiled3
         write(2,'(A)') compiled2
         write(2,'(A)') 'int run() {',&
         &'union tmp tmp1, tmp2, tmp3;',&
@@ -574,92 +576,113 @@ contains
         type(variable), allocatable :: vars(:)
         type(variable) :: tmpvar
         integer :: idx, idx2
-        savedCompiled = compiled
-        compiled = ''
+        logical :: thingsInserted
         compiled2 = ''
-        do idx=1,size(translations)
-            if (allocated(dws)) then
-                deallocate(dws)
-                allocate(dws(0))
-            else
-                allocate(dws(0))
-            end if
-            associate(this=>translations(idx))
-                if (this%included) then
-                    inCalledTrans = .true.
-                    currLine = this%name
-                    if (allocated(vars)) then
-                        deallocate(vars)
-                    end if
-                    allocate(vars(size(this%argnames)))
+        compiled3 = ''
+        do
+            thingsInserted = .false.
+            savedCompiled = compiled
+            compiled = ''
+            do idx=1,size(translations)
+                if (allocated(dws)) then
+                    deallocate(dws)
+                    allocate(dws(0))
+                else
+                    allocate(dws(0))
+                end if
+                associate(this=>translations(idx))
+                    if (this%included) then
+                        if (this%concurrentIncluded) then
+                            if (this%concurrentInserted) cycle
+                            this%concurrentInserted = .true.
+                        else if (this%inserted) then
+                            cycle
+                        end if
+                        this%inserted = .true.
+                        thingsInserted = .true.
+                        inCalledTrans = .true.
+                        currLine = this%name
+                        if (allocated(vars)) then
+                            deallocate(vars)
+                        end if
+                        allocate(vars(size(this%argnames)))
 
-                    if (arch=='IRIS') then
-                        compiled2 = compiled2//'.inst_'//this%name//achar(10)
-                    else if (arch(:1)=='C') then
-                        compiled2 = compiled2//'void inst_'//this%name//'('
-                    end if
-                    currentLoc = maximumLoc + 1
-                    do idx2=1,size(this%argnames)
-                        type = this%types(idx2)%value(2:)
-                        if (type=='*') call throw('called defined inst cannot have * as argument type')
                         if (arch=='IRIS') then
-                            call tmpvar%create(strtype(type),this%argnames(idx2)%value)
-                            savedCompiled = replace(&
-                                savedCompiled,this%name//'$'//this%argnames(idx2)%value,'M'//itoa(tmpvar%location-19))
-                            if (strtype(type)==32) then
+                            compiled2 = compiled2//'.inst_'//this%name//achar(10)
+                        else if (arch(:1)=='C') then
+                            compiled2 = compiled2//'void inst_'//this%name//'('
+                            compiled3 = compiled3//'void inst_'//this%name//'('
+                        end if
+                        currentLoc = maximumLoc + 1
+                        do idx2=1,size(this%argnames)
+                            type = this%types(idx2)%value(2:)
+                            if (type=='*') call throw('called defined inst cannot have * as argument type')
+                            if (arch=='IRIS') then
+                                call tmpvar%create(strtype(type),this%argnames(idx2)%value)
                                 savedCompiled = replace(&
-                                    savedCompiled,this%name//'$$'//this%argnames(idx2)%value,'M'//itoa(tmpvar%location-18))
-                            end if
+                                    savedCompiled,this%name//'$'//this%argnames(idx2)%value,'M'//itoa(tmpvar%location-19))
+                                if (strtype(type)==32) then
+                                    savedCompiled = replace(&
+                                        savedCompiled,this%name//'$$'//this%argnames(idx2)%value,'M'//itoa(tmpvar%location-18))
+                                end if
 
-                        else
-                            tmpvar%name = this%argnames(idx2)%value
-                            if (this%value(idx2)) then
-                                tmpvar%ptr = .false.
                             else
-                                tmpvar%ptr = .true.
+                                tmpvar%name = this%argnames(idx2)%value
+                                if (this%value(idx2)) then
+                                    tmpvar%ptr = .false.
+                                else
+                                    tmpvar%ptr = .true.
+                                end if
+                                tmpvar%type = int(strtype(type),1)
                             end if
-                            tmpvar%type = int(strtype(type),1)
-                        end if
-                        currLine = currLine//' '//tmpvar%name
-                        vars(idx2) = tmpvar
+                            currLine = currLine//' '//tmpvar%name
+                            vars(idx2) = tmpvar
+                            if (arch(:1)=='C') then
+                                if (tmpvar%ptr) then
+                                    compiled2 = compiled2//c_type(strtype(type))//'* '//this%argnames(idx2)%value
+                                    compiled3 = compiled3//c_type(strtype(type))//'* '//this%argnames(idx2)%value
+                                else
+                                    compiled2 = compiled2//c_type(strtype(type))//' '//this%argnames(idx2)%value
+                                    compiled3 = compiled3//c_type(strtype(type))//' '//this%argnames(idx2)%value
+                                end if
+                                if (idx2/=size(this%argnames)) then
+                                    compiled2 = compiled2//', '
+                                    compiled3 = compiled3//', '
+                                end if
+                            end if
+                        end do
                         if (arch(:1)=='C') then
-                            if (tmpvar%ptr) then
-                                compiled2 = compiled2//c_type(strtype(type))//'* '//this%argnames(idx2)%value
-                            else
-                                compiled2 = compiled2//c_type(strtype(type))//' '//this%argnames(idx2)%value
-                            end if
-                            if (idx2/=size(this%argnames)) compiled2 = compiled2//', '
+                            compiled3 = compiled3//');'//achar(10)
+                            compiled2 = compiled2//') {'//achar(10)//'union tmp tmp1, tmp2, tmp3;'//achar(10)
                         end if
-                    end do
-                    if (arch(:1)=='C') then
-                        compiled2 = compiled2//') {'//achar(10)//'union tmp tmp1, tmp2, tmp3;'//achar(10)
-                    end if
-                    call insertTrans(currLine,this%name,vars,dws,.true.)
+                        call insertTrans(currLine,this%name,vars,dws,.true.)
 
-                   compiled2 = compiled2//compiled//achar(10)
-                    if (arch(:1)=='C') then
-                        compiled2 = compiled2//'}'//achar(10)
-                    else if (arch=='IRIS') then
-                        compiled2 = compiled2//'HRET'//achar(10)
+                    compiled2 = compiled2//compiled//achar(10)
+                        if (arch(:1)=='C') then
+                            compiled2 = compiled2//'}'//achar(10)
+                        else if (arch=='IRIS') then
+                            compiled2 = compiled2//'HRET'//achar(10)
+                        end if
                     end if
-                end if
-                if (arch(:1)=='C'.and.this%concurrentIncluded) then
-                    compiled2 = compiled2//'void cinst_'//this%name//'(void* args) {'//achar(10)
-                    compiled2 = compiled2//'struct arguments {'//achar(10)
-                    do idx2=1,size(this%argnames)
-                        compiled2 = compiled2//c_type(strtype(this%types(idx2)%value(2:)))
-                        if (.not.this%value(idx2)) compiled2 = compiled2//'*'
-                        compiled2 = compiled2//' arg'//itoa(idx2)//';'//achar(10)
-                    end do
-                    compiled2 = compiled2//'};'//achar(10)//'inst_'//this%name//'('
-                    do idx2=1,size(this%argnames)
-                        compiled2 = compiled2//'((struct arguments*)args)->arg'//itoa(idx2)//','
-                    end do
-                    compiled2(len(compiled2):) = ')'
-                    compiled2 = compiled2//';'//achar(10)//'}'//achar(10)
-                end if
-            end associate
+                    if (arch(:1)=='C'.and.this%concurrentIncluded) then
+                        compiled2 = compiled2//'void cinst_'//this%name//'(void* args) {'//achar(10)
+                        compiled2 = compiled2//'struct arguments {'//achar(10)
+                        do idx2=1,size(this%argnames)
+                            compiled2 = compiled2//c_type(strtype(this%types(idx2)%value(2:)))
+                            if (.not.this%value(idx2)) compiled2 = compiled2//'*'
+                            compiled2 = compiled2//' arg'//itoa(idx2)//';'//achar(10)
+                        end do
+                        compiled2 = compiled2//'};'//achar(10)//'inst_'//this%name//'('
+                        do idx2=1,size(this%argnames)
+                            compiled2 = compiled2//'((struct arguments*)args)->arg'//itoa(idx2)//','
+                        end do
+                        compiled2(len(compiled2):) = ')'
+                        compiled2 = compiled2//';'//achar(10)//'}'//achar(10)
+                    end if
+                end associate
+            end do
+            compiled = savedCompiled
+            if (.not.thingsInserted) exit
         end do
-        compiled = savedCompiled
     end subroutine
 end

@@ -6,6 +6,8 @@ module inst
         logical :: compiled = .false.
         logical :: included = .false.
         logical :: concurrentIncluded = .false.
+        logical :: inserted = .false.
+        logical :: concurrentInserted = .false.
 
         character(len=:), allocatable :: name
         type(string), allocatable :: argnames(:)
@@ -76,7 +78,6 @@ contains
                     else
                         call app(c_type(strtype(translation%types(i)%value(2:)))//'* arg'//itoa(i)//';')
                     end if
-                    if (i/=size(translation%argnames)) compiled = compiled//','
                 end if
                 if (result(:1)/='V'.and..not.translation%value(i)) then
                     call throw('instruction calls must not include immediates except for pass by value arguments')
@@ -99,11 +100,9 @@ contains
                 call app('};')
                 call app(output//'};')
                 incthread = .true.
-                call app('thrd_t thread'//itoa(unique)//';')
+                call app('threads = realloc(threads,++sizethreads*sizeof(thrd_t));')
                 call app(&
-                 'thrd_create(&thread'//itoa(unique)//',(thrd_start_t)cinst_'//getop(line,0)//',&args'//itoa(unique)//');')
-                ending = ending//'thrd_join(thread'//itoa(unique)//',NULL);'//achar(10)
-                unique = unique + 1
+                 'thrd_create(threads+sizethreads-1,(thrd_start_t)cinst_'//getop(line,0)//',&args'//itoa(unique)//');')
                 i = getTrans_index(getop(line,0),line,vars,dws)
                 translations(i)%concurrentIncluded = .true.
             else
@@ -360,7 +359,7 @@ contains
             getTrans = translations(i)
             return
         end do big
-        call throw('no valid translation found')
+        call throw('no valid translation found for instruction '//name)
     end function
 
     integer function getTrans_index(name,input,vars,dws)
