@@ -62,8 +62,7 @@ module var
         else if (name(:1)=='-'.or.name(:1)=='+'.or.(name(:1)>='1'.and.name(:1)<='9')) then
             read(name, *) evalConst
         else
-            print*,name
-            call throw('expected integer constant',.false.)
+            call throw('expected integer constant, got '//name,.false.)
             evalConst = 0
         end if
     end function

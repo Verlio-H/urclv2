@@ -434,7 +434,7 @@ contains
                  ! ABS, FABS, NEG, SRSH, MOV, INC, DEC, NOT, BRP, BRN, BRZ, BNZ, FBRZ, FBNZ, PSH, POP, CAL, RET, HLT
                 call standard3Op(tmpstr, getop(line,1), getop(line,2), getop(line,3), vars,dws)
             case ('MOV',& !general
-                 &'ABS','NEG','LSH','RSH','SRSH','SMOV','INC','DEC','NOT','BRP','BRN','BRZ','BNZ',& !integer
+                 &'ABS','NEG','LSH','RSH','SRSH','SMOV','INC','DEC','NOT','BRP','BRN','BRZ','BNZ','BEV','BOD',& !integer
                  &'FABS','FNEG','FBRP','FBRN','FBRZ','FBNZ',& !real
                  &'LFABS','LFNEG','LFBRP','LFBRN','LFBRZ','LFBNZ',& !long real
                  &'ITOF','FTOI','ITOLF','LFTOI','FTOLF','LFTOF') !conversion
@@ -621,9 +621,13 @@ contains
                                 call tmpvar%create(strtype(type),this%argnames(idx2)%value)
                                 savedCompiled = replace(&
                                     savedCompiled,this%name//'$'//this%argnames(idx2)%value,'M'//itoa(tmpvar%location-19))
+                                compiled2 = replace(&
+                                    compiled2,this%name//'$'//this%argnames(idx2)%value,'M'//itoa(tmpvar%location-19))
                                 if (strtype(type)==32) then
                                     savedCompiled = replace(&
                                         savedCompiled,this%name//'$$'//this%argnames(idx2)%value,'M'//itoa(tmpvar%location-18))
+                                    compiled2 = replace(&
+                                        compiled2,this%name//'$$'//this%argnames(idx2)%value,'M'//itoa(tmpvar%location-18))
                                 end if
 
                             else

@@ -174,9 +174,6 @@ module includes
      'HPOP R9'//achar(10)//&
      'HRET'
     character(len=*), parameter :: opengl = &
-     '#include <string.h>'//achar(10)//&
-     '#include "include/glad.h"'//achar(10)//&
-     '#include <GLFW/glfw3.h>'//achar(10)//&
      ''//achar(10)//&
      'static mtx_t windowmtx;'//achar(10)//&
      'GLFWwindow *window;'//achar(10)//&
@@ -197,6 +194,7 @@ module includes
      '{'//achar(10)//&
      '    glViewport(0, 0, wwidth, wheight);'//achar(10)//&
      '    mtx_lock(&windowmtx);'//achar(10)//&
+     '    if (data!=NULL) free(data);'//achar(10)//&
      '    data = malloc(wwidth*wheight*4);'//achar(10)//&
      '    width = wwidth;'//achar(10)//&
      '    height = wheight;'//achar(10)//&
@@ -372,6 +370,7 @@ module includes
      '    status = 1;'//achar(10)//&
      '    mtx_unlock(mtxptr);'//achar(10)//&
      '    glfwTerminate();'//achar(10)//&
+     '    for (int i=0; i<sizethreads; ++i) thrd_join(*(threads+i),NULL);'//achar(10)//&
      '    thrd_join(renderthread, NULL);'//achar(10)//&
      '}'
     character(len=*), parameter :: includeinsts = '@inst ABS'//achar(10)//&

@@ -197,12 +197,14 @@ end function
         end do
     end subroutine
 
-    function getop(line, num, error)
+    function getop(line, num, error, strt, end)
         character(len=:), allocatable, intent(in) :: line
         integer, intent(in) :: num
         logical, intent(in), optional :: error
+        integer, intent(in), optional :: strt
+        integer, intent(inout), optional :: end
         character(len=:), allocatable :: getop, tmp
-        integer i, j, group, start
+        integer i, j, group, start, actualStart
         logical istr, skip, ilstr
         character tmpc
         logical :: comment
@@ -214,7 +216,12 @@ end function
         group = 0
         skip = .false.
         start = 1
-        do i=1, len(line)
+        if (present(strt)) then
+            actualStart = strt
+        else
+            actualStart = 1
+        end if
+        do i=actualStart, len(line)
             if (skip) then
                 skip = .false.
                 cycle
@@ -267,6 +274,9 @@ end function
                 end if
                 if (j==num) then
                     getop = trim(adjustl(line(start:i-1)))
+                    if (present(end)) then
+                        end = start
+                    end if
                     return
                 end if
                 j = j + 1
@@ -279,7 +289,13 @@ end function
         end do
         if (.not.comment.and.j==num) then
             getop = trim(adjustl(tmp(start:)))
+            if (present(end)) then
+                end = start
+            end if
         else
+            if (present(end)) then
+                end = i-1
+            end if
             getop = ' '
             if (.not.present(error)) then
                 call throw('missing operand (looking for operand '//itoa(num)//')')

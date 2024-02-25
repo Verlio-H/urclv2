@@ -12,6 +12,7 @@ module emit
             write(2,'(A)') '#include <stdio.h>',&
             &'#include <stdlib.h>',&
             &'#include <math.h>',&
+            &'#include <string.h>',&
             &'#ifdef _WIN32',&
             &'#include <conio.h>',&
             &'#define HEADER " "',&
@@ -46,14 +47,23 @@ module emit
             &'float vREAL;',&
             &'double vLREAL;',&
             &'};',&
-            &'unsigned char* data;',&
+            &'unsigned char* data = NULL;',&
+            &'unsigned char* data2;',&
+            &'unsigned char* write;',&
+            &'int buffered = 0;',&
             &'int width, height, status;',&
+            &'int width2, height2;',&
             &'void* mtxptr;',&
-            &'void* windowptr;'
+            &'void* windowptr;',&
+            &'void* sp;'
             if (incopengl.or.incthread) then
                 write(2,'(A)') '#include "include/c11threads.h"'
                 write(2,'(A)') 'thrd_t* threads;'
                 write(2,'(A)') 'int sizethreads;'
+            end if
+            if (incopengl) then
+                
+                write(2,'(A)') '#include "include/glad.h"','#include <GLFW/glfw3.h>'
             end if
         else if (arch=='IRIS') then
             write(2,'(A)') 'BITS 16','MINREG 25'
@@ -75,7 +85,7 @@ module emit
                 end if
                 write(2,'(A)') 'run();'
                 if (incopengl.or.incthread) then
-                    write(2,'(A)') 'for (int i=0; i<sizethreads; ++i) thrd_join(threads+i,NULL);'
+                    write(2,'(A)') 'for (int i=0; i<sizethreads; ++i) thrd_join(*(threads+i),NULL);'
                 end if
                 write(2,'(A)') '}'
             end if
@@ -133,7 +143,7 @@ module emit
         stackdec = .true.
         if (arch(:1)=='C') then
             call app(c_type(memsze)//' stack['//arg1//'];')
-            call app('void* sp = stack;')
+            call app('sp = stack;')
         end if
     end subroutine
 
@@ -292,7 +302,7 @@ module emit
         end select
         if (arch=='IRIS') then
             select case (op)
-            case ('BGE','BLE','BRG','BRL','BRE','BNE','BRC','BNC','SBRG','SBRL')
+            case ('BGE','BLE','BRG','BRL','BRE','BNE','BRC','BNC','SBRG','SBRL','SBGE','SBLE')
                 if (type2/=32.and.type3/=32) then
                     call parseSmall(output1,result1,1,vars)
                     call parseSmall(output2,result2,2,vars)
@@ -411,6 +421,22 @@ module emit
                         call app('JMP ~+2')
                         call app('BRP '//output1//' '//output3u)
                         call app('BRG '//output1//' '//output2//' '//output3)
+                    case ('SBGE')
+                        if (output2u/=''.and.output3u/='') then
+                            call app('SBRG '//output1//' '//output2u//' '//output3u)
+                            call app('BNE ~+6 '//output2u//' '//output3u)
+                        else if (output3u=='') then
+                            call app('SBRG '//output1//' '//output2u//' 0')
+                        else if (output2u=='') then
+                            call app('SBRL ~+6 '//output3u//' -1')
+                        end if
+                        call app('BRN ~+3 '//output2u)
+                        call app('BRN '//output1//' '//output3u)
+                        call app('JMP ~+2')
+                        call app('BRP ~+2 '//output3u)
+                        call app('BGE '//output1//' '//output2//' '//output3)
+                    case default
+                        call throw('32 bit translation not implemented for '//op,.false.)
                     end select
                 end if
             case ('LLOD')
@@ -704,25 +730,36 @@ module emit
                         else
                             call vars(getvar_index(vars,result1))%set(' '//output2u,.true.)
                         end if
+                    case default
+                        call throw('32 bit translation not implemented for '//op,.false.)
                     end select
                 end if
-            case ('FADD','LFADD','FSUB','LFSUB','FMLT','LFMLT','FDIV','LFDIV')
+            case ('FADD','LFADD','FSUB','LFSUB','FMLT','LFMLT','FDIV','LFDIV','FMOD')
                 call parseSmall(output2,result2,2,vars)
                 call parseSmall(output3,result3,3,vars)
                 result1 = result1(2:)
-                if (op(:1)=='L') then
-                    call vars(getvar_index(vars,result1))%set(op(2:)//' '//output2//' '//output3)
-                else
-                    call vars(getvar_index(vars,result1))%set(op//' '//output2//' '//output3)
-                end if
+                block
+                    character(len=:), allocatable :: optmp
+                    optmp = op
+                    if (optmp(:1)=='L') optmp = optmp(2:)
+                    select case (optmp)
+                    case ('FMOD')
+                        call app('FDIV R25 '//output2//' '//output3)
+                        call app('FTOI R25 R25')
+                        call app('FMLT R25 R25 '//output3)
+                        call vars(getvar_index(vars,result1))%set('FSUB '//output2//' R25')
+                    case default
+                        call vars(getvar_index(vars,result1))%set(optmp//' '//output2//' '//output3)
+                    end select
+                end block
             case ('FBRL','LFBRL','FBRG','LFBRG','FBLE','LFBLE','FBGE','LFBGE','FBRE','LFBRE','FBNE','LFBNE')
                 call parseSmall(output2,result2,2,vars)
                 call parseSmall(output3,result3,3,vars)
-                result1 = result1(2:)
+                call parseSmall(output1,result1,1,vars)
                 if (op(:1)=='L') then
-                    call vars(getvar_index(vars,result1))%set('S'//op(3:)//' '//output2//' '//output3)
+                    call app('S'//op(3:)//' '//output1//' '//output2//' '//output3)
                 else
-                    call vars(getvar_index(vars,result1))%set('S'//op(2:)//' '//output2//' '//output3)
+                    call app('S'//op(2:)//' '//output1//' '//output2//' '//output3)
                 end if
             case default
                 call throw('unknown instruction '//op//' for arch IRIS')
@@ -739,7 +776,7 @@ module emit
             if (type3 >= 8 .and. type3 <= 32) type3 = 64
             select case (op)
             case ('SDIV','SBSR','SBGE','SBRG','SBLE','SBRL','SBRC','SBNC')
-                if (type2==32) then
+                if (type2==64) then
                     call app('tmp2.v'//trim(typestr(type2))//'=('//stype2//')'//result2//';')
                     call app('tmp3.v'//trim(typestr(type3))//'=('//stype3//')'//result3//';')
                 else
@@ -879,10 +916,9 @@ module emit
         result1 = parseArg(arg1, type1, vars, dws)
         result2 = parseArg(arg2, type2, vars, dws)
         select case (op)
-        case ('BRP','BRN','BRZ','BNZ','FBRP','FBRN','FBRZ','FBNZ','LFBRP','LFBRN','LFBRZ','LFBNZ')
+        case ('BRP','BRN','BRZ','BNZ','FBRP','FBRN','FBRZ','FBNZ','LFBRP','LFBRN','LFBRZ','LFBNZ','BEV','BOD')
             if (type1/=1) then
                 call throw('arg1 of '//op//' must be of type ADDR')
-                
             end if
         case default
             if (result1(:1)/='V') then
@@ -892,11 +928,16 @@ module emit
         end select
         if (arch=='IRIS') then
             select case (op)
-            case ('MOV','INC','LSH','NEG','NOT','ITOF','FTOI')
+            case ('MOV','INC','LSH','NEG','NOT','ITOF','FTOI','RSH','FNEG','FABS')
                 result1 = result1(2:)
                 if (type1/=32) then
                     call parseSmall(output2,result2,3,vars)
-                    call vars(getvar_index(vars, result1))%set(op//' '//output2)
+                    select case (op)
+                    case ('FNEG')
+                        call vars(getvar_index(vars, result1))%set('NOT '//output2)
+                    case default
+                        call vars(getvar_index(vars, result1))%set(op//' '//output2)
+                    end select
                 else
                     call parseBig(output2,output2u,result2,3,vars,type2)
                     select case (op)
@@ -934,6 +975,17 @@ module emit
                         call app('INC R25 R25')
                         call vars(getvar_index(vars, result1))%set('LSH '//output2)
                         call vars(getvar_index(vars, result1))%set(' R25',.true.)
+                    case ('RSH')
+                        if (output2u/='') then
+                            call app('AND R25 1 '//output2u)
+                            call app('BSL R25 R25 15')
+                            call app('RSH R23 '//output2)
+                            call vars(getvar_index(vars, result1))%set('ADD '//output2//' R25')
+                            call vars(getvar_index(vars, result1))%set('RSH '//output2u,.true.)
+                        else
+                            call vars(getvar_index(vars, result1))%set('RSH '//output2)
+                            call vars(getvar_index(vars, result1))%set(' 0',.true.)
+                        end if
                     case ('NEG')
                         call app('NOT R23 '//output2)
                         if (output2u=='') then
@@ -953,29 +1005,43 @@ module emit
                     case ('FTOI')
                         call vars(getvar_index(vars, result1))%set(op//' '//output2)
                         call vars(getvar_index(vars, result1))%set(' R0',.true.)
+                    case default
+                        call throw('32 bit translation not implemented for '//op,.false.)
                     end select
                 end if
-            case ('BRP','BRZ','BNZ')
+            case ('FBRP','BRP','BRN','BRZ','BNZ','BEV','BOD')
                 call parseSmall(output1,result1,2,vars)
                 if (type2/=32) then
                     call parseSmall(output2,result2,3,vars)
-                    call app(op//' '//output1//' '//output2)
+                    select case (op)
+                    case ('FBRP')
+                        call app('BRP '//output1//' '//output2)
+                    case default
+                        call app(op//' '//output1//' '//output2)
+                    end select
                 else
                     call parseBig(output2,output2u,result2,3,vars,type2)
                     select case (op)
                     case ('BRP')
                         call app('BRP '//output1//' '//output2u)
+                    case ('BRN')
+                        call app('BRN '//output1//' '//output2u)
+                    case ('BEV')
+                        call app('BEV '//output1//' '//output2)
+                    case ('BOD')
+                        call app('BOD '//output1//' '//output2)
                     case ('BNZ')
                         call app('BNZ '//output1//' '//output2)
                         call app('BNZ '//output1//' '//output2u)
                     case ('BRZ')
                         call app('BNZ ~+2 '//output2u)
                         call app('BRZ '//output1//' '//output2)
+                    case default
+                        call throw('32 bit translation not implemented for '//op,.false.)
                     end select
                 end if
             case default
                 call throw('unknown instruction '//op//' for arch IRIS')
-                
             end select
         else if (arch(:1)=='C') then
             result1 = result1(2:)
@@ -1016,6 +1082,10 @@ module emit
                 call app('if (tmp2.v32==0) goto *('//result1//');')
             case ('BNZ')
                 call app('if (tmp2.v32!=0) goto *('//result1//');')
+            case ('BEV')
+                call app('if (!(tmp2.v32&1)) goto *('//result1//');')
+            case ('BOD')
+                call app('if (tmp2.v32&1) goto *('//result1//');')
             case ('FABS')
                 call app('tmp1.vREAL=fabs(tmp2.vREAL);')
             case ('FNEG')
@@ -1051,7 +1121,7 @@ module emit
             end select
             result2 = 'tmp1.v'//trim(typestr(type1))
             select case (op)
-            case ('BRP','BRN','BRZ','BNZ','FBRP','FBRN','FBRZ','FBNZ','LFBRP','LFBRN','LFBRZ','LFBNZ')
+            case ('BRP','BRN','BRZ','BNZ','FBRP','FBRN','FBRZ','FBNZ','LFBRP','LFBRN','LFBRZ','LFBNZ','BEV','BOD')
             case default
                 call vars(getvar_index(vars, result1))%set(result2)
             end select
@@ -1062,7 +1132,7 @@ module emit
         type(DW), allocatable, intent(in) :: dws(:)
         type(variable), allocatable, intent(in) :: vars(:)
         character(len=:), allocatable, intent(in) :: arg1, op
-        character(len=:), allocatable :: result1, output1
+        character(len=:), allocatable :: result1, output1, output1u
         integer type1
         integer tmp
         result1 = parseArg(arg1, type1, vars, dws)
@@ -1070,30 +1140,24 @@ module emit
         case ('CAL')
             if (type1/=1) then
                 call throw('arg1 of '//op//' must be of type ADDR')
-                
             end if
             if (.not.cstackdec) then
                 call throw('size of call stack must be declared before use of CAL')
-                
             end if
         case ('JMP')
             if (type1/=1) then
                 call throw('arg1 of '//op//' must be of type ADDR')
-                
             end if
         case ('PSH')
             if (.not.stackdec) then
                 call throw('size of stack must be declared before use of PSH')
-                
             end if
         case ('POP')
             if (result1(:1)/='V') then
                 call throw('arg1 of POP must be a variable')
-                
             end if
             if (.not.stackdec) then
                 call throw('size of stack must be declared before use of POP')
-                
             end if
         end select
         if (arch(:1)=='C') then
@@ -1118,6 +1182,23 @@ module emit
             end select
         else if (arch=='IRIS') then
             select case (op)
+            case ('PSH')
+                if (type1/=32) then
+                    call parseSmall(output1,result1,2,vars)
+                    call app('HPSH '//output1)
+                else
+                    call parseBig(output1,output1u,result1,2,vars,type1)
+                    call app('HPSH '//output1)
+                    call app('HPSH '//output1u)
+                end if
+            case ('POP')
+                result1 = result1(2:)
+                if (type1/=32) then
+                    call vars(getvar_index(vars, result1))%set('HPOP ')
+                else
+                    call vars(getvar_index(vars, result1))%set('HPOP ',.true.)
+                    call vars(getvar_index(vars, result1))%set('HPOP ')
+                end if
             case ('CAL')
                 call parseSmall(output1,result1,2,vars)
                 call app('HCAL '//output1)
@@ -1126,7 +1207,6 @@ module emit
                 call app('JMP '//output1)
             case default
                 call throw('unknown instruction '//op//' for arch IRIS')
-                
             end select
         end if
     end subroutine
@@ -1140,13 +1220,11 @@ module emit
         integer type1, type2
         if (.not.memdec) then
             call throw('size of memory must be declared before use of STR')
-            
         end if
         result1 = parseArg(arg1, type1, vars, dws)
         result2 = parseArg(arg2, type2, vars, dws)
         if (type1/=1) then
             call throw('arg1 of STR must be of size ADDR')
-            
         end if
         if (arch(:1)=='C') then
             result1 = result1(2:)
@@ -1301,7 +1379,7 @@ module emit
         character(len=:), allocatable, intent(in) :: arg1, arg2, arg3, arg4
         character(len=:), allocatable :: result1, result2, output2, output2u
         character(len=:), allocatable :: result3, result4, output3, output4
-        integer type1, type2
+        integer type1, type2, itemp
         result1 = parseArg(arg1, type1, vars, dws)
         result2 = parseArg(arg2, type2, vars, dws)
         if (type1/=4) then
@@ -1314,29 +1392,67 @@ module emit
             case ('%TEXT','%ASCII')
                 call app('printf("%c",'//result2//');')
             case ('%NUMB')
-                call app('printf("%d",'//result2//');')
+                itemp = type2
+                if (itemp>=8) itemp = 32
+                call app('tmp1.v'//typestr(itemp)//' = '//result2//';')
+                call app('printf("%d",tmp1.v32);')
             case ('%FLOAT')
                 call app('printf("%f",'//result2//');')
+            case ('%CLEAR')
+                call app('if (buffered) write = data2; else write = data;')
+                call app('memset(write,0,height*width*4);')
+            case ('%BUFFER')
+                call app('buffered = 1;')
+                call app('mtx_lock(mtxptr);')
+                call app('data2 = malloc(width*height*4);')
+                call app('width2=width; height2=height;')
+                call app('memcpy(data2,data,width*height*4);')
+                call app('mtx_unlock(mtxptr);')
+            case ('%UNBUFFER')
+                call app('buffered = 0;')
+                call app('mtx_lock(mtxptr);')
+                call app('memcpy(data,data2,fmin(width,width2)*fmin(height,height2)*4);')
+                call app('mtx_unlock(mtxptr);')
+                call app('free(data2);')
             case ('%PIXEL')
                 result3 = parseArg(arg3, type1, vars, dws)
                 result4 = parseArg(arg4, type1, vars, dws)
                 result3 = result3(2:)
                 result4 = result4(2:)
                 call app('mtx_lock(mtxptr);')
-                call app('tmp1.v'//typestr(type1)//' = '//result4//';')
+                itemp = type1
+                if (itemp>=8) itemp = 32
+                call app('tmp1.v'//typestr(itemp)//' = '//result4//';')
+                call app('if (buffered) write = data2; else write = data;')
                 select case (colormode)
                 case ('BIN')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4] = tmp1.v32>=1;')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+1] = tmp1.v32>=1;')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+2] = tmp1.v32>=1;')
+                    call app('write[((buffered ? height2 : height)-'//result3//')*(buffered ? width2 : width)*4+'//result2&
+                     //'*4] = tmp1.v32>=1;')
+                    call app('write[((buffered ? height2 : height)-'//result3//')*(buffered ? width2 : width)*4+'//result2&
+                     //'*4+1] = tmp1.v32>=1;')
+                    call app('write[((buffered ? height2 : height)-'//result3//')*(buffered ? width2 : width)*4+'//result2&
+                     //'*4+2] = tmp1.v32>=1;')
                 case ('MONO')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4] = tmp1.v32;')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+1] = tmp1.v32;')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+2] = tmp1.v32;')
+                    call app('write[((buffered ? height2 : height)-'//result3//')*(buffered ? width2 : width)*4+'//result2&
+                     //'*4] = tmp1.v32;')
+                    call app('write[((buffered ? height2 : height)-'//result3//')*(buffered ? width2 : width)*4+'//result2&
+                     //'*4+1] = tmp1.v32;')
+                    call app('write[((buffered ? height2 : height)-'//result3//')*(buffered ? width2 : width)*4+'//result2&
+                     //'*4+2] = tmp1.v32;')
                 case ('RGB8')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4] = ((tmp1.v32&0xE0)>>5)*36;')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+1] = (tmp1.v32&0x1C)*9;')
-                    call app('data[(height-'//result3//')*width*4+'//result2//'*4+2] = (tmp1.v32&3)*85;')
+                    call app('write[((buffered ? height2 : height)-'//result3//')*(buffered ? width2 : width)*4+'//result2&
+                     //'*4] = ((tmp1.v32&0xE0)>>5)*36;')
+                    call app('write[((buffered ? height2 : height)-'//result3//')*(buffered ? width2 : width)*4+'//result2&
+                     //'*4+1] = (tmp1.v32&0x1C)*9;')
+                    call app('write[((buffered ? height2 : height)-'//result3//')*(buffered ? width2 : width)*4+'//result2&
+                     //'*4+2] = (tmp1.v32&3)*85;')
+                case ('RGB24')
+                    call app('write[((buffered ? height2 : height)-'//result3//')*(buffered ? width2 : width)*4+'//result2&
+                     //'*4] = tmp1.v32>>16;')
+                    call app('write[((buffered ? height2 : height)-'//result3//')*(buffered ? width2 : width)*4+'//result2&
+                     //'*4+1] = (tmp1.v32>>8)&0xFF;')
+                    call app('write[((buffered ? height2 : height)-'//result3//')*(buffered ? width2 : width)*4+'//result2&
+                     //'*4+2] = tmp1.v32&0xFF;')
                 end select
                 call app('mtx_unlock(mtxptr);')
                 incopengl = .true.
@@ -1404,18 +1520,47 @@ module emit
                 call app('tmp1.v32=getch();')
                 result2 = 'tmp1.v'//trim(typestr(type1))
                 call vars(getvar_index(vars, result1))%set(result2)
+            case ('%TIME')
+                call app('tmp1.vREAL=glfwGetTime();')
+                result2 = 'tmp1.v'//trim(typestr(type1))
+                call vars(getvar_index(vars, result1))%set(result2)
             case ('%SIZEX')
-                call app('tmp1.v32=width;')
+                call app('mtx_lock(mtxptr);')
+                call app('tmp1.v32=buffered ? width2 : width;')
+                call app('mtx_unlock(mtxptr);')
                 result2 = 'tmp1.v'//trim(typestr(type1))
                 call vars(getvar_index(vars, result1))%set(result2)
                 incopengl = .true.
             case ('%SIZEY')
-                call app('tmp1.v32=height;')
+                call app('mtx_lock(mtxptr);')
+                call app('tmp1.v32=buffered ? height2 : height;')
+                call app('mtx_unlock(mtxptr);')
+                result2 = 'tmp1.v'//trim(typestr(type1))
+                call vars(getvar_index(vars, result1))%set(result2)
+                incopengl = .true.
+            case ('%MOUSE_POSX')
+                call app('{')
+                call app('double tmpx, tmpy;')
+                call app('mtx_lock(mtxptr);')
+                call app('glfwGetCursorPos((GLFWwindow*)windowptr, &tmpx, &tmpy);')
+                call app('tmp1.v32=tmpx*2>=(buffered ? width2 : width) ? (buffered ? width2 : width) : tmpx*2;')
+                call app('mtx_unlock(mtxptr);')
+                call app('}')
+                result2 = 'tmp1.v'//trim(typestr(type1))
+                call vars(getvar_index(vars, result1))%set(result2)
+                incopengl = .true.
+            case ('%MOUSE_POSY')
+                call app('{')
+                call app('double tmpx, tmpy;')
+                call app('mtx_lock(mtxptr);')
+                call app('glfwGetCursorPos((GLFWwindow*)windowptr, &tmpx, &tmpy);')
+                call app('tmp1.v32=tmpy*2>=(buffered ? height2 : height) ? (buffered ? height2 : height) : tmpy*2;')
+                call app('mtx_unlock(mtxptr);')
+                call app('}')
                 result2 = 'tmp1.v'//trim(typestr(type1))
                 call vars(getvar_index(vars, result1))%set(result2)
                 incopengl = .true.
             case ('%EXIT')
-
                 call app('mtx_lock(mtxptr);'//achar(10)//'tmp1.v32=status;'//achar(10)//'mtx_unlock(mtxptr);')
                 result2 = 'tmp1.v'//trim(typestr(type1))
                 call vars(getvar_index(vars, result1))%set(result2)
@@ -1426,15 +1571,16 @@ module emit
                 result3 = result3(2:)
                 result4 = result4(2:)
                 call app('mtx_lock(mtxptr);')
+                call app('if (buffered) write = data2; else write = data;')
                 select case (colormode)
                 case ('BIN')
-                    call app(result1//' = data[(height-'//result3//')*width*4+'//result4//'*4];')
+                    call app(result1//' = write[(height-'//result3//')*width*4+'//result4//'*4];')
                 case ('MONO')
-                    call app(result1//' = data[(height-'//result3//')*width*4+'//result4//'*4];')
+                    call app(result1//' = write[(height-'//result3//')*width*4+'//result4//'*4];')
                 case ('RGB8')
-                    call app(result1//' = data[(height-'//result3//')*width*4+'//result4//'*4+2]/85+'//&
-                    'data[(height-'//result3//')*width*4+'//result4//'*4+1]/9+'//&
-                    '(data[(height-'//result3//')*width*4+'//result4//'*4+2]/36<<5);')
+                    call app(result1//' = write[(height-'//result3//')*width*4+'//result4//'*4+2]/85+'//&
+                    'write[(height-'//result3//')*width*4+'//result4//'*4+1]/9+'//&
+                    '(write[(height-'//result3//')*width*4+'//result4//'*4+2]/36<<5);')
                 end select
                 call app('mtx_unlock(mtxptr);')
                 incopengl = .true.
@@ -1446,6 +1592,14 @@ module emit
             select case (result2)
             case ('%TEXT')
                 call vars(getvar_index(vars, result1))%set('IN %TEXT')
+            case ('%TIME')
+                call app('IN R25 %TIME')
+                call app('ITOF R25 R25')
+                call vars(getvar_index(vars, result1))%set('FMLT R25 0.001')
+            case ('%MOUSE_POSX')
+                call vars(getvar_index(vars, result1))%set('IN %MOUSE_X')
+            case ('%MOUSE_POSY')
+                call vars(getvar_index(vars, result1))%set('IN %MOUSE_Y')
             case ('%SIZEX')
                 call vars(getvar_index(vars, result1))%set('IN %X')
             case ('%SIZEY')
@@ -1461,7 +1615,7 @@ module emit
                 call app('OUT %X '//output3//achar(10)//'OUT %Y '//output4)
                 call app('IN %COLOR '//output1)
             case default
-                call throw('unknown port "'//result2//'" for target C')
+                call throw('unknown port "'//result2//'" for target IRIS')
             end select
         end if
     end subroutine
@@ -1502,7 +1656,11 @@ module emit
                 if (typedw/=32) then
                     call app('DW '//result1(2:))
                 else
-                    read(result1(2:),*) temp
+                    if (result1(2:3)=='0x') then
+                        read(result1(4:), '(Z10)') temp
+                    else
+                        read(result1(2:),*) temp
+                    end if
                     call app('DW '//itoa(iand(temp,2**16-1)))
                     call app('DW '//itoa(shiftr(temp,16)))
                 end if
@@ -1668,7 +1826,7 @@ module emit
         type(string), allocatable :: inputActual(:)
         character(len=:), allocatable :: dwmemsze, line, prevLine, temp, temp2
         logical comment, skip
-        integer i,j,unused
+        integer i,unused,k,l
         type(variable), allocatable :: vars(:)
         integer :: sizedw, type, memszet
         logical :: done, dwlabel, ininst
@@ -1760,43 +1918,45 @@ module emit
           5 if (line(i:i)=='['.or.line(i:i)==']') line = line(:i-1)//line(i+1:)
             i = i + 1
             if (i<=len(line)) goto 5
-            j = 1
-            do while (getop(line,j,.false.)/='')
-                temp = getop(line,j)
-                if (temp(:1)=='"') then
-                    skip = .false.
-                    temp = temp(2:len(trim(temp))-1)
-                    do i=1,len(temp)
-                        if (skip) then
-                            skip = .false.
-                            cycle
-                        else if (temp(i:i)=='"') then
-                            exit
-                        else if (temp(i:i)=='\') then
-                            temp2 = '            '
-                            write (temp2, '(I0)') count
-                            dwlist = dwlist//'*(('//c_type(type)//'*)(Dws'//itoa(id)//&
-                             '+'//trim(temp2)//')) = '''//temp(i:i+1)//''';'//achar(10)
-                            skip = .true.
-                        else
-                            temp2 = '            '
-                            write (temp2, '(I0)') count
-                            dwlist = dwlist// '*(('//c_type(type)//'*)(Dws'//itoa(id)//&
-                             '+'//trim(temp2)//')) = '''//temp(i:i)//''';'//achar(10)
-                        end if
-                        count = count + sizedw
-                    end do
-                    count = count - sizedw
-                else
-                    temp = parseArg(temp,unused,vars,dws)
-                    temp2 = '            '
-                    write (temp2, '(I0)') count
-                    dwlist = dwlist//'*(('//c_type(type)//'*)(Dws'//itoa(id)//&
-                     '+'//trim(temp2)//')) = '//temp(2:)//';'//achar(10)
-                end if
-                j = j + 1
-                count = count + sizedw
-            end do
+            k = 1
+            if (.true.) then
+                do while (getop(line,1,.false.,k)/='')
+                    temp = getop(line,1,.false.,k,l)
+                    k = l
+                    if (temp(:1)=='"') then
+                        skip = .false.
+                        temp = temp(2:len(trim(temp))-1)
+                        do i=1,len(temp)
+                            if (skip) then
+                                skip = .false.
+                                cycle
+                            else if (temp(i:i)=='"') then
+                                exit
+                            else if (temp(i:i)=='\') then
+                                temp2 = '            '
+                                write (temp2, '(I0)') count
+                                dwlist = dwlist//'*(('//c_type(type)//'*)(Dws'//itoa(id)//&
+                                '+'//trim(temp2)//')) = '''//temp(i:i+1)//''';'//achar(10)
+                                skip = .true.
+                            else
+                                temp2 = '            '
+                                write (temp2, '(I0)') count
+                                dwlist = dwlist// '*(('//c_type(type)//'*)(Dws'//itoa(id)//&
+                                '+'//trim(temp2)//')) = '''//temp(i:i)//''';'//achar(10)
+                            end if
+                            count = count + sizedw
+                        end do
+                        count = count - sizedw
+                    else
+                        temp = parseArg(temp,unused,vars,dws)
+                        temp2 = '            '
+                        write (temp2, '(I0)') count
+                        dwlist = dwlist//('*(('//c_type(type)//'*)(Dws'//itoa(id)//&
+                        '+'//trim(temp2)//')) = '//temp(2:)//';'//achar(10))
+                    end if
+                    count = count + sizedw
+                end do
+            end if
         end if
         call updatecom(line, comment)
         end do

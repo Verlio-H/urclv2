@@ -1,4 +1,6 @@
 #!/bin/bash
 ./compiler $1 -arch C
-gcc-13 output.c include/*.c -I/usr/local/include -lglfw -framework OpenGL -Ofast -march=native
+echo "compiled to c"
+gcc output.c include/*.c -I/usr/local/include -lglfw -framework OpenGL -Ofast -march=native
+echo "running"
 ./a.out
