@@ -120,6 +120,8 @@ module compilervars
     integer, allocatable :: types(:)
 
     character(len=:), allocatable :: savedCompiled
+
+    logical :: urcx = .false.
 end
 
 program compiler
@@ -171,6 +173,8 @@ program compiler
             output = .true.
         else if (arguments=='-arch') then
             archarg = .true.
+        else if (arguments=='-urcx') then
+            urcx = .true.
         else
             ifile = arguments
         end if

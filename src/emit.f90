@@ -746,6 +746,7 @@ module emit
                     case ('FMOD')
                         call app('FDIV R25 '//output2//' '//output3)
                         call app('FTOI R25 R25')
+                        call app('ITOF R25 R25')
                         call app('FMLT R25 R25 '//output3)
                         call vars(getvar_index(vars,result1))%set('FSUB '//output2//' R25')
                     case default
@@ -1495,6 +1496,38 @@ module emit
                 call parseSmall(output4,result4,3,vars)
                 call app('OUT %X '//output2//achar(10)//'OUT %Y '//output3)
                 call app('OUT %COLOR '//output4)
+            case ('%BUFFER')
+                if (urcx) then
+                    call app('OUT %BUFFER 1')
+                else 
+                    call app('OUT %FREEZE 1')
+                end if
+            case ('%UNBUFFER')
+                if (urcx) then
+                    call app('OUT %BUFFER 0')
+                    call throw('warning: %unbuffer translation is not exactly correct for urcx',.false.)
+                else
+                    call app('OUT %UNFREEZE 0')
+                end if
+            case ('%CLEAR')
+                if (urcx) then
+                    call app('IN R25 %X')
+                    call app('IN R24 %Y')
+                    call app('MOV R23 R0')
+                    call app('MOV R22 R0')
+                    call app('OUT %X R22')
+                    call app('OUT %Y R23')
+                    call app('OUT %COLOR 0')
+                    call app('INC R22 R22')
+                    call app('BRL ~-4 R22 R25')
+                    call app('INC R23 R23')
+                    call app('BRL ~-7 R23 R24')
+                    call throw('warning: %clear translation is suboptimal for urcx',.false.)
+                else
+                    call app('OUT %CLEAR 0')
+                end if
+            case default
+                call throw('unknown port "'//result1//'" for target IRIS')
             end select
         end if
 
@@ -1593,13 +1626,26 @@ module emit
             case ('%TEXT')
                 call vars(getvar_index(vars, result1))%set('IN %TEXT')
             case ('%TIME')
-                call app('IN R25 %TIME')
-                call app('ITOF R25 R25')
-                call vars(getvar_index(vars, result1))%set('FMLT R25 0.001')
+                if (urcx) then
+                    call app('IN R25 %TIME')
+                    call app('BSR R25 R25 6')
+                    call app('ITOF R25 R25')
+                    call vars(getvar_index(vars, result1))%set('FMLT R25 0.064')
+                else
+                    call throw('%TIME only exists in urcx for target IRIS')
+                end if
             case ('%MOUSE_POSX')
-                call vars(getvar_index(vars, result1))%set('IN %MOUSE_X')
+                if (urcx) then
+                    call vars(getvar_index(vars, result1))%set('IN %MOUSE_X')
+                else
+                    call throw('%MOUSE_POSX only exists in urcx for target IRIS')
+                end if
             case ('%MOUSE_POSY')
-                call vars(getvar_index(vars, result1))%set('IN %MOUSE_Y')
+                if (urcx) then
+                    call vars(getvar_index(vars, result1))%set('IN %MOUSE_Y')
+                else
+                    call throw('%MOUSE_POSY only exists in urcx for target IRIS')
+                end if
             case ('%SIZEX')
                 call vars(getvar_index(vars, result1))%set('IN %X')
             case ('%SIZEY')
